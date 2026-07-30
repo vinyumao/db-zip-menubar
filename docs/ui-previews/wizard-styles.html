@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DB Zip Wizard — UI 方案预览</title>
+<style>
+  :root {
+    --bg: #e8ecf1;
+    --panel: #f4f6f8;
+    --surface: #ffffff;
+    --ink: #1a1f2a;
+    --muted: #6b7380;
+    --line: #d8dee6;
+    --brand: #2f6bff;
+    --brand-2: #12c7c0;
+    --ok: #1a9f6e;
+    --ok-bg: #e8f7f0;
+    --warn: #c47a12;
+    --warn-bg: #fff6e8;
+    --shadow: 0 10px 40px rgba(26, 31, 42, 0.08);
+    --radius: 14px;
+    --font: "SF Pro Text", "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", "Menlo", "PingFang SC", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    background:
+      radial-gradient(900px 420px at 12% -10%, rgba(47, 107, 255, 0.14), transparent 60%),
+      radial-gradient(700px 380px at 90% 0%, rgba(18, 199, 192, 0.12), transparent 55%),
+      var(--bg);
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 24px 64px;
+  }
+
+  .intro h1 {
+    margin: 0 0 6px;
+    font-size: 24px;
+    letter-spacing: -0.02em;
+  }
+  .intro p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 22px 0 18px;
+    align-items: center;
+  }
+
+  .seg {
+    display: inline-flex;
+    background: rgba(255,255,255,0.72);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px;
+    gap: 2px;
+    backdrop-filter: blur(8px);
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: 600 13px/1 var(--font);
+    padding: 8px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .seg button[aria-selected="true"] {
+    background: var(--ink);
+    color: #fff;
+  }
+
+  .label {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .scheme-panel { display: none; }
+  .scheme-panel.active { display: block; }
+
+  .scheme-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .scheme-title h2 {
+    margin: 0;
+    font-size: 16px;
+  }
+  .scheme-title span {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .window {
+    width: min(520px, 100%);
+    margin: 0 auto;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 12px;
+    box-shadow: var(--shadow), 0 1px 0 rgba(255,255,255,0.8) inset;
+    overflow: hidden;
+  }
+
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 14px;
+    background: linear-gradient(#fbfcfd, #eef1f5);
+    border-bottom: 1px solid var(--line);
+  }
+  .dots { display: flex; gap: 6px; }
+  .dots i {
+    width: 10px; height: 10px; border-radius: 50%;
+    display: block;
+  }
+  .dots .r { background: #ff5f57; }
+  .dots .y { background: #febc2e; }
+  .dots .g { background: #28c840; }
+  .titlebar .name {
+    flex: 1;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-right: 42px;
+  }
+
+  .body { padding: 16px 18px 18px; min-height: 360px; display: flex; flex-direction: column; }
+  .step-view { display: none; flex: 1; flex-direction: column; }
+  .step-view.active { display: flex; }
+
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .progress .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #c5ccd6;
+  }
+  .progress .dot.on { background: var(--brand); box-shadow: 0 0 0 3px rgba(47,107,255,0.18); }
+  .progress .dot.done { background: var(--brand-2); }
+  .progress .bar {
+    flex: 1; height: 2px; background: #d7dde6; border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress .bar > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--brand), var(--brand-2));
+    width: var(--p, 20%);
+  }
+  .progress .hint {
+    font-size: 11px; color: var(--muted); white-space: nowrap;
+  }
+
+  .page-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+  }
+
+  .seg-name { font-family: var(--mono); font-size: 12px; line-height: 1.45; word-break: break-all; }
+  .seg-name .n { color: var(--brand); font-weight: 700; }
+  .seg-name .h { color: var(--muted); }
+  .seg-name .t { color: #0f9a94; font-weight: 700; }
+  .seg-name .z { color: var(--ink); font-weight: 700; }
+
+  .path {
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .path code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: #eef1f5;
+    padding: 3px 7px;
+    border-radius: 6px;
+  }
+  .linkish {
+    border: 0; background: none; color: var(--brand);
+    font: 600 12px var(--font); cursor: pointer; padding: 0;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 16px;
+  }
+  .actions .spacer { flex: 1; }
+  .btn {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    font: 600 13px/1 var(--font);
+    padding: 8px 14px;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+  .btn:hover { background: #f7f8fa; }
+  .btn.primary {
+    border-color: transparent;
+    color: #fff;
+    background: linear-gradient(135deg, var(--brand), #3a8bff 55%, var(--brand-2));
+    box-shadow: 0 6px 16px rgba(47,107,255,0.28);
+  }
+  .btn.ghost { background: transparent; color: var(--muted); }
+  .btn:disabled, .btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .btn.primary:disabled {
+    background: #9aa3b2;
+  }
+  .btn.stack {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 9px 14px;
+    max-width: 280px;
+    text-align: left;
+  }
+  .btn.stack .main { font-size: 13px; font-weight: 700; line-height: 1.2; }
+  .btn.stack .sub {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.88;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 250px;
+  }
+  .btn.primary.stack .sub { opacity: 0.92; }
+  .actions.confirm-actions {
+    flex-wrap: wrap;
+  }
+  .last-hint {
+    width: 100%;
+    order: -1;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--warn);
+    background: var(--warn-bg);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: none;
+  }
+  .last-hint.show { display: block; }
+
+  /* —— Scheme 1: centered file card —— */
+  .s1-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: 0 4px 16px rgba(26,31,42,0.04);
+  }
+  .s1-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .s1-icon {
+    width: 44px; height: 44px; border-radius: 11px;
+    background: linear-gradient(160deg, #3b82f6, #14b8a6);
+    display: grid; place-items: center;
+    box-shadow: 0 8px 18px rgba(20,184,166,0.28);
+    flex-shrink: 0;
+  }
+  .s1-icon svg { width: 24px; height: 24px; color: #fff; }
+  .s1-meta { flex: 1; min-width: 0; }
+  .s1-short {
+    font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .s1-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+  .s1-full { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+  .choice-grid { display: grid; gap: 8px; }
+  .choice {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    font: inherit; color: inherit;
+  }
+  .choice:hover { border-color: #b8c7ff; background: #f8faff; }
+  .choice .ico {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: #eef2ff; color: var(--brand);
+    display: grid; place-items: center; flex-shrink: 0;
+  }
+  .choice .t { font-weight: 650; font-size: 14px; }
+  .choice .d { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* —— Scheme 2: split —— */
+  .s2-split {
+    display: grid;
+    grid-template-columns: 132px 1fr;
+    gap: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    min-height: 168px;
+  }
+  .s2-preview {
+    border-radius: 12px;
+    background:
+      radial-gradient(80px 60px at 50% 30%, rgba(255,255,255,0.18), transparent),
+      linear-gradient(165deg, #243044, #1a2333);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: #fff; padding: 12px;
+  }
+  .s2-preview .zip {
+    width: 54px; height: 66px; border-radius: 8px;
+    background: linear-gradient(180deg, #4f8cff, #1ec9c0);
+    position: relative;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.28);
+  }
+  .s2-preview .zip::after {
+    content: "";
+    position: absolute; right: 0; top: 0;
+    border-width: 0 14px 14px 0;
+    border-style: solid;
+    border-color: #9fe8e4 #1d2a3d;
+  }
+  .s2-preview .zip::before {
+    content: "";
+    position: absolute; left: 50%; top: 14px; bottom: 14px;
+    width: 3px; margin-left: -1.5px;
+    background: repeating-linear-gradient(#1e3a8a 0 4px, transparent 4px 7px);
+    border-radius: 2px; opacity: 0.55;
+  }
+  .s2-preview small { font-size: 11px; opacity: 0.7; }
+  .s2-body .s1-short { margin-bottom: 8px; }
+  .s2-kv { display: grid; gap: 8px; margin-top: 10px; }
+  .s2-kv .row {
+    display: grid; grid-template-columns: 42px 1fr; gap: 8px; align-items: start;
+    font-size: 12px;
+  }
+  .s2-kv .k { color: var(--muted); padding-top: 1px; }
+  .s2-list .choice { background: #fff; }
+
+  /* —— Scheme 3: summary strip + list —— */
+  .s3-strip {
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(90deg, rgba(47,107,255,0.08), rgba(18,199,192,0.08));
+    border: 1px solid #d5e0f5;
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .s3-strip .mini {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: linear-gradient(160deg, #3b82f6, #14b8a6);
+    flex-shrink: 0;
+  }
+  .s3-strip .text { min-width: 0; flex: 1; }
+  .s3-strip .name {
+    font-size: 13px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .s3-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    flex: 1;
+  }
+  .s3-panel .seg-name { margin: 8px 0 10px; }
+  .list-rows { display: grid; gap: 6px; }
+  .list-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: #f7f9fb;
+    cursor: pointer;
+    width: 100%;
+    font: inherit; color: inherit; text-align: left;
+  }
+  .list-row:hover { border-color: #c9d6f5; background: #f3f6ff; }
+  .list-row .t { font-weight: 650; font-size: 13.5px; }
+  .list-row .d { font-size: 11.5px; color: var(--muted); }
+  .list-row .chev { margin-left: auto; color: #a0a8b5; font-size: 16px; }
+
+  .note {
+    margin-top: 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  @media (max-width: 640px) {
+    .s2-split { grid-template-columns: 1fr; }
+    .s2-preview { min-height: 110px; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="intro">
+      <h1>DB Zip Wizard — UI 方案预览</h1>
+      <p>已选 <strong>方案 1</strong>。确认页新增「按上次处理」：可用时升为主按钮，一点全自动解压+复制；不可用则留在确认页并说明原因。</p>
+    </div>
+
+    <div class="controls">
+      <span class="label">方案</span>
+      <div class="seg" role="tablist" id="schemeTabs">
+        <button type="button" aria-selected="true" data-scheme="1">1 · 居中文件卡 ✓</button>
+        <button type="button" aria-selected="false" data-scheme="2">2 · 参考</button>
+        <button type="button" aria-selected="false" data-scheme="3">3 · 参考</button>
+      </div>
+      <span class="label" style="margin-left:8px">步骤</span>
+      <div class="seg" role="tablist" id="stepTabs">
+        <button type="button" aria-selected="true" data-step="confirm">确认文件</button>
+        <button type="button" aria-selected="false" data-step="dest">选择目标</button>
+        <button type="button" aria-selected="false" data-step="mode">内容模式</button>
+      </div>
+      <span class="label" style="margin-left:8px" id="lastLabel">上次状态</span>
+      <div class="seg" role="tablist" id="lastTabs">
+        <button type="button" aria-selected="true" data-last="path-ok">路径可用</button>
+        <button type="button" aria-selected="false" data-last="device-ok">设备可用</button>
+        <button type="button" aria-selected="false" data-last="device-off">设备掉线</button>
+        <button type="button" aria-selected="false" data-last="path-bad">路径失效</button>
+        <button type="button" aria-selected="false" data-last="none">无记录</button>
+      </div>
+    </div>
+
+    <div class="stage">
+
+      <!-- ========== SCHEME 1 ========== -->
+      <section class="scheme-panel active" data-scheme-panel="1">
+        <div class="scheme-title">
+          <h2>方案 1 · 居中文件卡（已选）</h2>
+          <span>确认页：「按上次」可用时为主按钮；「处理」降为自定义向导</span>
+        </div>
+        <div class="window">
+          <div class="titlebar">
+            <div class="dots"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+            <div class="name">DB Zip Wizard</div>
+          </div>
+          <div class="body">
+            <div class="progress" data-progress>
+              <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+              <div class="bar"><span style="--p:22%"></span></div>
+              <span class="hint">确认</span>
+            </div>
+
+            <div class="step-view active" data-step-view="confirm">
+              <h3 class="page-title">确认文件</h3>
+              <div class="s1-card">
+                <div class="s1-top">
+                  <div class="s1-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h6l4 4v14H8V3z"/><path d="M14 3v4h4"/><path d="M12 8v8"/><path d="M10.5 10h3M10.5 13h3M10.5 16h3"/></svg>
+                  </div>
+                  <div class="s1-meta">
+                    <div class="s1-short" title="100018313_22f01f292313580e_1785387162019.zip">100018313_22f01f…2019.zip</div>
+                    <div class="s1-sub">ZIP · 约 42 MB · Downloads</div>
+                  </div>
+                  <span class="pill ok">已匹配</span>
+                </div>
+                <div class="s1-full">
+                  <div class="seg-name" id="seg1">
+                    <span class="n">100018313</span><span class="h">_</span><span class="h">22f01f292313580e</span><span class="h">_</span><span class="t">1785387162019</span><span class="z">.zip</span>
+                  </div>
+                  <div class="path" style="margin-top:8px">
+                    <code>~/Downloads/…2019.zip</code>
+                    <button class="linkish" type="button">复制路径</button>
+                  </div>
+                </div>
+              </div>
+              <div class="actions confirm-actions" id="s1ConfirmActions">
+                <div class="last-hint" id="lastHint"></div>
+                <button class="btn ghost" type="button">忽略</button>
+                <button class="btn" type="button">稍后</button>
+                <span class="spacer"></span>
+                <button class="btn" type="button" id="customBtn">处理</button>
+                <button class="btn primary stack" type="button" id="lastBtn">
+                  <span class="main">按上次处理</span>
+                  <span class="sub" id="lastSub">本地 · ~/work/demo · 常用文件</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="dest">
+              <h3 class="page-title">选择复制位置</h3>
+              <p style="margin:0 0 12px;color:var(--muted);font-size:13px">解压已完成，接下来复制到哪里？</p>
+              <div class="choice-grid">
+                <button class="choice" type="button">
+                  <span class="ico">📁</span>
+                  <span><div class="t">指定路径</div><div class="d">本地目录 · 可记住历史</div></span>
+                </button>
+                <button class="choice" type="button">
+                  <span class="ico">📱</span>
+                  <span><div class="t">指定设备</div><div class="d">ADB 已连接设备</div></span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn ghost" type="button">打开解压目录</button>
+                <span class="spacer"></span>
+                <button class="btn" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="mode">
+              <h3 class="page-title">内容模式</h3>
+              <p style="margin:0 0 12px;color:var(--muted);font-size:13px">要复制哪些内容？</p>
+              <div class="choice-grid">
+                <button class="choice" type="button">
+                  <span class="ico">✦</span>
+                  <span><div class="t">常用文件</div><div class="d">db + si + 最新日期日志分片</div></span>
+                </button>
+                <button class="choice" type="button">
+                  <span class="ico">▣</span>
+                  <span><div class="t">整目录</div><div class="d">仅子文件 / 子文件夹</div></span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn" type="button">返回</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== SCHEME 2 ========== -->
+      <section class="scheme-panel" data-scheme-panel="2">
+        <div class="scheme-title">
+          <h2>方案 2 · 左右分栏</h2>
+          <span>左侧 zip 视觉锚点，右侧可读详情；选择步改为纵向列表</span>
+        </div>
+        <div class="window">
+          <div class="titlebar">
+            <div class="dots"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+            <div class="name">DB Zip Wizard</div>
+          </div>
+          <div class="body">
+            <div class="progress" data-progress>
+              <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+              <div class="bar"><span style="--p:22%"></span></div>
+              <span class="hint">确认</span>
+            </div>
+
+            <div class="step-view active" data-step-view="confirm">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <h3 class="page-title" style="margin:0">确认文件</h3>
+                <span class="pill ok">已匹配规则</span>
+              </div>
+              <div class="s2-split">
+                <div class="s2-preview">
+                  <div class="zip" aria-hidden="true"></div>
+                  <small>ZIP</small>
+                </div>
+                <div class="s2-body">
+                  <div class="s1-short">100018313_22f01f…2019.zip</div>
+                  <div class="seg-name">
+                    <span class="n">100018313</span><span class="h">_</span><span class="h">22f01f292313580e</span><span class="h">_</span><span class="t">1785387162019</span><span class="z">.zip</span>
+                  </div>
+                  <div class="s2-kv">
+                    <div class="row"><span class="k">位置</span><span><code style="font-family:var(--mono);font-size:11px;background:#eef1f5;padding:2px 6px;border-radius:5px">~/Downloads</code>
+                      <button class="linkish" type="button">复制完整路径</button></span></div>
+                    <div class="row"><span class="k">大小</span><span>42.1 MB</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn ghost" type="button">忽略</button>
+                <button class="btn" type="button">稍后</button>
+                <span class="spacer"></span>
+                <button class="btn primary" type="button">处理</button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="dest">
+              <h3 class="page-title">选择复制位置</h3>
+              <div class="s2-list choice-grid">
+                <button class="choice" type="button">
+                  <span class="ico">📁</span>
+                  <span><div class="t">指定路径</div><div class="d">本地目录 · 历史可快捷选用</div></span>
+                </button>
+                <button class="choice" type="button">
+                  <span class="ico">📱</span>
+                  <span><div class="t">指定设备</div><div class="d">推送到已连接 ADB 设备</div></span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn ghost" type="button">打开解压目录</button>
+                <span class="spacer"></span>
+                <button class="btn" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="mode">
+              <h3 class="page-title">内容模式</h3>
+              <div class="s2-list choice-grid">
+                <button class="choice" type="button">
+                  <span class="ico">✦</span>
+                  <span><div class="t">常用文件</div><div class="d">db + si + 最新日期日志分片</div></span>
+                </button>
+                <button class="choice" type="button">
+                  <span class="ico">▣</span>
+                  <span><div class="t">整目录</div><div class="d">仅子文件 / 子文件夹</div></span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn" type="button">返回</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== SCHEME 3 ========== -->
+      <section class="scheme-panel" data-scheme-panel="3">
+        <div class="scheme-title">
+          <h2>方案 3 · 顶摘要条</h2>
+          <span>文件身份压缩到顶栏，下方留给决策列表——选目标/模式更顺</span>
+        </div>
+        <div class="window">
+          <div class="titlebar">
+            <div class="dots"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+            <div class="name">DB Zip Wizard</div>
+          </div>
+          <div class="body">
+            <div class="progress" data-progress>
+              <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+              <div class="bar"><span style="--p:22%"></span></div>
+              <span class="hint">确认</span>
+            </div>
+
+            <div class="s3-strip">
+              <div class="mini" aria-hidden="true"></div>
+              <div class="text">
+                <div class="name">100018313_22f01f…2019.zip</div>
+                <div class="path" style="margin-top:2px"><code>~/Downloads</code></div>
+              </div>
+              <span class="pill ok">已匹配</span>
+            </div>
+
+            <div class="step-view active" data-step-view="confirm">
+              <h3 class="page-title">确认文件</h3>
+              <div class="s3-panel">
+                <div style="font-size:12px;color:var(--muted);font-weight:600">完整文件名</div>
+                <div class="seg-name">
+                  <span class="n">100018313</span><span class="h">_</span><span class="h">22f01f292313580e</span><span class="h">_</span><span class="t">1785387162019</span><span class="z">.zip</span>
+                </div>
+                <div class="path">
+                  <span>完整路径</span>
+                  <code style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">/Users/wayne/Downloads/100018313_22f01f292313580e_1785387162019.zip</code>
+                  <button class="linkish" type="button">复制</button>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn ghost" type="button">忽略</button>
+                <button class="btn" type="button">稍后</button>
+                <span class="spacer"></span>
+                <button class="btn primary" type="button">处理</button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="dest">
+              <h3 class="page-title">选择复制位置</h3>
+              <div class="list-rows">
+                <button class="list-row" type="button">
+                  <span><div class="t">指定路径</div><div class="d">本地目录 · 可记住历史</div></span>
+                  <span class="chev">›</span>
+                </button>
+                <button class="list-row" type="button">
+                  <span><div class="t">指定设备</div><div class="d">ADB 已连接设备</div></span>
+                  <span class="chev">›</span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn ghost" type="button">打开解压目录</button>
+                <span class="spacer"></span>
+                <button class="btn" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="step-view" data-step-view="mode">
+              <h3 class="page-title">内容模式</h3>
+              <div class="list-rows">
+                <button class="list-row" type="button">
+                  <span><div class="t">常用文件</div><div class="d">db + si + 最新日期日志分片</div></span>
+                  <span class="chev">›</span>
+                </button>
+                <button class="list-row" type="button">
+                  <span><div class="t">整目录</div><div class="d">仅子文件 / 子文件夹</div></span>
+                  <span class="chev">›</span>
+                </button>
+              </div>
+              <div class="actions">
+                <button class="btn" type="button">返回</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <p class="note">已选方案 1 +「按上次处理」。用顶部「上次状态」切换四种场景预览。确认无误后告诉我，再落 SwiftUI / HistoryStore。</p>
+  </div>
+
+<script>
+  const schemeTabs = document.getElementById('schemeTabs');
+  const stepTabs = document.getElementById('stepTabs');
+  const lastTabs = document.getElementById('lastTabs');
+  const lastBtn = document.getElementById('lastBtn');
+  const lastSub = document.getElementById('lastSub');
+  const customBtn = document.getElementById('customBtn');
+  const lastHint = document.getElementById('lastHint');
+  const lastLabel = document.getElementById('lastLabel');
+
+  const stepMeta = {
+    confirm: { p: '22%', hint: '确认', dots: [1, 0, 0] },
+    dest:    { p: '55%', hint: '复制目标', dots: [2, 1, 0] },
+    mode:    { p: '78%', hint: '内容模式', dots: [2, 2, 1] },
+  };
+
+  const lastStates = {
+    'path-ok': {
+      show: true, ok: true,
+      sub: '本地 · ~/work/recopos-db · 常用文件',
+      hint: ''
+    },
+    'device-ok': {
+      show: true, ok: true,
+      sub: '设备 · Pixel 7 (24141…) · 整目录',
+      hint: ''
+    },
+    'device-off': {
+      show: true, ok: false,
+      sub: '设备 · Pixel 7 (24141…) · 整目录',
+      hint: '上次设备未连接或找不到，请连接后重试，或点「自定义处理」走完整向导。'
+    },
+    'path-bad': {
+      show: true, ok: false,
+      sub: '本地 · ~/work/old-path · 常用文件',
+      hint: '上次路径不存在或不可写，请点「自定义处理」重新选择。'
+    },
+    'none': {
+      show: false, ok: false,
+      sub: '',
+      hint: ''
+    }
+  };
+
+  function applyLastState(key) {
+    const state = lastStates[key] || lastStates.none;
+    lastTabs.querySelectorAll('button').forEach(btn => {
+      btn.setAttribute('aria-selected', btn.dataset.last === key ? 'true' : 'false');
+    });
+
+    if (!state.show) {
+      lastBtn.hidden = true;
+      lastHint.classList.remove('show');
+      lastHint.textContent = '';
+      customBtn.textContent = '处理';
+      customBtn.classList.add('primary');
+      customBtn.classList.remove('stack');
+      return;
+    }
+
+    lastBtn.hidden = false;
+    lastSub.textContent = state.sub;
+    lastBtn.disabled = !state.ok;
+    customBtn.textContent = '自定义处理';
+    if (state.ok) {
+      lastBtn.classList.add('primary');
+      customBtn.classList.remove('primary');
+      lastHint.classList.remove('show');
+      lastHint.textContent = '';
+    } else {
+      lastBtn.classList.remove('primary');
+      customBtn.classList.add('primary');
+      lastHint.textContent = state.hint;
+      lastHint.classList.add('show');
+    }
+  }
+
+  function setScheme(id) {
+    document.querySelectorAll('[data-scheme-panel]').forEach(el => {
+      el.classList.toggle('active', el.getAttribute('data-scheme-panel') === id);
+    });
+    schemeTabs.querySelectorAll('button').forEach(btn => {
+      btn.setAttribute('aria-selected', btn.dataset.scheme === id ? 'true' : 'false');
+    });
+    const showLast = id === '1';
+    lastTabs.style.display = showLast ? '' : 'none';
+    lastLabel.style.display = showLast ? '' : 'none';
+    syncSteps();
+  }
+
+  function setStep(step) {
+    stepTabs.querySelectorAll('button').forEach(btn => {
+      btn.setAttribute('aria-selected', btn.dataset.step === step ? 'true' : 'false');
+    });
+    syncSteps();
+  }
+
+  function syncSteps() {
+    const step = stepTabs.querySelector('[aria-selected="true"]').dataset.step;
+    const meta = stepMeta[step];
+    document.querySelectorAll('.scheme-panel.active .step-view').forEach(v => {
+      v.classList.toggle('active', v.getAttribute('data-step-view') === step);
+    });
+    document.querySelectorAll('.scheme-panel.active [data-progress]').forEach(prog => {
+      const dots = prog.querySelectorAll('.dot');
+      dots.forEach((d, i) => {
+        d.classList.remove('on', 'done');
+        if (meta.dots[i] === 2) d.classList.add('done');
+        if (meta.dots[i] === 1) d.classList.add('on');
+      });
+      const bar = prog.querySelector('.bar > span');
+      if (bar) bar.style.setProperty('--p', meta.p);
+      const hint = prog.querySelector('.hint');
+      if (hint) hint.textContent = meta.hint;
+    });
+  }
+
+  schemeTabs.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-scheme]');
+    if (btn) setScheme(btn.dataset.scheme);
+  });
+  stepTabs.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-step]');
+    if (btn) setStep(btn.dataset.step);
+  });
+  lastTabs.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-last]');
+    if (btn) applyLastState(btn.dataset.last);
+  });
+
+  applyLastState('path-ok');
+</script>
+</body>
+</html>

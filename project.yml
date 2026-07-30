@@ -1,0 +1,41 @@
+name: DbZipMenubar
+options:
+  bundleIdPrefix: tools.wayne
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  BASE_SDK: macosx
+  SWIFT_VERSION: "5.9"
+packages:
+  DbZipCore:
+    path: .
+targets:
+  DbZipMenubar:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/DbZipMenubar
+        excludes:
+          - Resources/**
+    dependencies:
+      - package: DbZipCore
+        product: DbZipCore
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: tools.wayne.db-zip-menubar
+      PRODUCT_NAME: DB Zip
+      MARKETING_VERSION: "1.0.0"
+      CURRENT_PROJECT_VERSION: "1"
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_CFBundleDisplayName: DB Zip
+      INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+      INFOPLIST_KEY_LSUIElement: YES
+      INFOPLIST_KEY_NSHumanReadableCopyright: ""
+      INFOPLIST_KEY_NSDownloadsFolderUsageDescription: 用于监听下载完成的业务 zip，并在确认后移动/解压。
+      INFOPLIST_KEY_NSDocumentsFolderUsageDescription: 用于将解压后的文件复制到你指定的本地目录。
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      CODE_SIGN_ENTITLEMENTS: App/DbZipMenubar/DbZipMenubar.entitlements
+      ENABLE_HARDENED_RUNTIME: YES
+      CODE_SIGN_IDENTITY: "-"
+      DEVELOPMENT_TEAM: ""
+      SWIFT_STRICT_CONCURRENCY: targeted
