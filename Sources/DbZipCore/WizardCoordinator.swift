@@ -390,6 +390,8 @@ public final class WizardCoordinator: ObservableObject {
             switch destinationKind {
             case .path:
                 let destPath = try await copyPathSegment()
+                // 上次成功存用户选的基目录，不存 allocate 后的 01/02 落地目录，避免下次再套一层。
+                let basePath = selectedPath.map { ($0 as NSString).standardizingPath } ?? destPath
                 success = WizardSuccessSummary(
                     extractDirectory: extractDirectory,
                     destinationDescription: destPath,
@@ -398,7 +400,7 @@ public final class WizardCoordinator: ObservableObject {
                 persistLastSuccessfulAction(
                     kind: .path,
                     mode: contentMode,
-                    path: destPath,
+                    path: basePath,
                     device: nil,
                     usedFallback: false
                 )
@@ -499,17 +501,18 @@ public final class WizardCoordinator: ObservableObject {
 
     private func finishBothAsPathOnlySuccess() {
         guard let extractDirectory else { return }
-        let pathDesc = bothPathDescription ?? selectedPath ?? ""
+        let actualPath = bothPathDescription ?? selectedPath ?? ""
+        let basePath = selectedPath.map { ($0 as NSString).standardizingPath } ?? actualPath
         success = WizardSuccessSummary(
             extractDirectory: extractDirectory,
-            destinationDescription: pathDesc,
-            pathDescription: pathDesc
+            destinationDescription: actualPath,
+            pathDescription: actualPath
         )
-        if let contentMode, !pathDesc.isEmpty {
+        if let contentMode, !basePath.isEmpty {
             persistLastSuccessfulAction(
                 kind: .path,
                 mode: contentMode,
-                path: pathDesc,
+                path: basePath,
                 device: nil,
                 usedFallback: false
             )

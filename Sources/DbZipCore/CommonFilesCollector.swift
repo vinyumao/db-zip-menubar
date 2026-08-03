@@ -26,6 +26,8 @@ public struct CollectedCommonFiles: Sendable, Equatable {
 /// 对齐旧脚本 `collect_common_files`：仅一层。
 public enum CommonFilesCollector {
     private static let logPattern = #"_d([0-9]{8})(_[0-9]+)?\.log$"#
+    /// 常用文件模式：按文件名日期取最近若干天的全部分片。
+    public static let recentLogDayLimit = 5
 
     public static func collect(in root: URL, fileManager: FileManager = .default) throws -> CollectedCommonFiles {
         let entries = try fileManager.contentsOfDirectory(
@@ -61,13 +63,20 @@ public enum CommonFilesCollector {
             }
         }
 
-        let latestDate = logCandidates.map(\.date).max()
-        let logFiles: [URL]
-        if let latestDate {
-            logFiles = logCandidates.filter { $0.date == latestDate }.map(\.url)
-        } else {
-            logFiles = []
-        }
+        let recentDates = Array(
+            Set(logCandidates.map(\.date))
+                .sorted(by: >)
+                .prefix(recentLogDayLimit)
+        )
+        let recentDateSet = Set(recentDates)
+        let logFiles = logCandidates
+            .filter { recentDateSet.contains($0.date) }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date > rhs.date }
+                return lhs.url.lastPathComponent < rhs.url.lastPathComponent
+            }
+            .map(\.url)
+        let latestDate = recentDates.first
 
         var files: [URL] = []
         if let dbFile { files.append(dbFile) }
