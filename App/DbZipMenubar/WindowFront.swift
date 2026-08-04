@@ -31,6 +31,36 @@ enum WindowFront {
         }
     }
 
+    /// 关闭「待处理」窗口（若当前已打开）。
+    static func closePendingWindow() {
+        for window in NSApp.windows where isPendingWindow(window) {
+            window.close()
+        }
+    }
+
+    /// 关闭 Wizard 窗口（若当前已打开）。
+    static func closeWizardWindow() {
+        for window in NSApp.windows where isWizardWindow(window) {
+            window.close()
+        }
+    }
+
+    private static func isPendingWindow(_ window: NSWindow) -> Bool {
+        if let id = window.identifier?.rawValue.lowercased(), id.contains("pending") {
+            return true
+        }
+        return window.title.contains("待处理")
+    }
+
+    private static func isWizardWindow(_ window: NSWindow) -> Bool {
+        if let id = window.identifier?.rawValue.lowercased(), id.contains("wizard") {
+            return true
+        }
+        let title = window.title
+        return title.localizedCaseInsensitiveContains("wizard")
+            || title == "DB Zip Wizard"
+    }
+
     static func configureFloating(_ window: NSWindow) {
         window.level = .floating
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])

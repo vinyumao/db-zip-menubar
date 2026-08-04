@@ -199,24 +199,69 @@ public struct AdbClient {
     }
 
     public func push(sn: String, localURL: URL, remoteDir: String) throws {
-        let adb = try requireAdb()
-        let remotePath = "\(remoteDir.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/\(localURL.lastPathComponent)"
-            .replacingOccurrences(of: "//", with: "/")
-        let normalizedRemote: String
-        if remoteDir.hasPrefix("/") {
-            normalizedRemote = remoteDir.hasSuffix("/")
-                ? remoteDir + localURL.lastPathComponent
-                : remoteDir + "/" + localURL.lastPathComponent
-        } else {
-            normalizedRemote = remotePath
+        let destPath = Self.remoteJoin(remoteDir, localURL.lastPathComponent)
+        // 目标已是 /sdcard/db：直接 push。
+        // 其它目录（尤其 Android/data 下项目目录）：先 push 到 /sdcard/db 再 shell cp，
+        // 避开部分机型上 adb push 直写时的 remote fchown 失败。
+        if Self.normalizeRemoteDir(remoteDir) == Self.normalizeRemoteDir(AdbPaths.fallbackRemoteDir) {
+            try pushDirect(sn: sn, localPath: localURL.path, remotePath: destPath)
+            return
         }
+
+        guard try mkdirP(sn: sn, remoteDir: AdbPaths.fallbackRemoteDir) else {
+            throw AdbError.mkdirFailed(AdbPaths.fallbackRemoteDir)
+        }
+        let stagingPath = Self.remoteJoin(AdbPaths.fallbackRemoteDir, localURL.lastPathComponent)
+        try pushDirect(sn: sn, localPath: localURL.path, remotePath: stagingPath)
+
+        let isDirectory = localURL.hasDirectoryPath
+            || ((try? localURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true)
+        // cp 后属主是 shell、默认 600；App 在 ext_data_rw 组内，需 660 才能读写。
+        let cpCommand: String
+        if isDirectory {
+            cpCommand =
+                "rm -rf \"\(destPath)\" && cp -R \"\(stagingPath)\" \"\(destPath)\" && chmod -R ug+rwX \"\(destPath)\" && rm -rf \"\(stagingPath)\" && echo __CP_OK__"
+        } else {
+            cpCommand =
+                "cp \"\(stagingPath)\" \"\(destPath)\" && chmod 660 \"\(destPath)\" && rm -f \"\(stagingPath)\" && echo __CP_OK__"
+        }
+
+        let adb = try requireAdb()
         let result = try processRunner.run(
             executable: adb,
-            arguments: ["-s", sn, "push", localURL.path, normalizedRemote]
+            arguments: ["-s", sn, "shell", cpCommand]
+        )
+        let out = (result.stdout + result.stderr).replacingOccurrences(of: "\r", with: "")
+        if result.exitCode != 0 || !out.contains("__CP_OK__") {
+            throw AdbError.pushFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
+        }
+    }
+
+    private func pushDirect(sn: String, localPath: String, remotePath: String) throws {
+        let adb = try requireAdb()
+        let result = try processRunner.run(
+            executable: adb,
+            arguments: ["-s", sn, "push", localPath, remotePath]
         )
         if result.exitCode != 0 {
             throw AdbError.pushFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
         }
+    }
+
+    private static func normalizeRemoteDir(_ dir: String) -> String {
+        var value = dir.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.count > 1, value.hasSuffix("/") {
+            value.removeLast()
+        }
+        return value
+    }
+
+    private static func remoteJoin(_ dir: String, _ name: String) -> String {
+        let root = normalizeRemoteDir(dir)
+        if root.hasPrefix("/") {
+            return "\(root)/\(name)"
+        }
+        return "\(root)/\(name)".replacingOccurrences(of: "//", with: "/")
     }
 
     private func getProp(sn: String, key: String, adb: URL) throws -> String? {

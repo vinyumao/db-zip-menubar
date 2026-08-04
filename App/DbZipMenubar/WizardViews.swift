@@ -5,6 +5,7 @@ import SwiftUI
 struct WizardRootView: View {
     @EnvironmentObject private var appModel: AppModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
@@ -27,6 +28,15 @@ struct WizardRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openWizardWindow)) { _ in
             openWindow(id: "wizard")
             WindowFront.scheduleRaise()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dismissWizardWindow)) { _ in
+            dismiss()
+            WindowFront.closeWizardWindow()
+            appModel.closePendingListIfEmpty()
+        }
+        .onDisappear {
+            // 关闭流程窗口时，若待处理已空则一并关掉待处理列表
+            appModel.closePendingListIfEmpty()
         }
     }
 }

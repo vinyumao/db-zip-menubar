@@ -139,7 +139,7 @@ final class AppModel: ObservableObject {
             jobQueue.removeRecord(id: job.id)
             refreshPending()
             if activeCoordinator?.job.id == job.id {
-                activeCoordinator = nil
+                dismissWizard()
             }
             presentAlert(title: "文件不存在", message: "「\(job.fileName)」已不在原路径，已从待处理中移除该记录。")
             return false
@@ -218,11 +218,12 @@ final class AppModel: ObservableObject {
             return
         }
         if activeCoordinator?.job.id == id {
-            activeCoordinator = nil
+            dismissWizard()
             jobQueue.cancelActiveWithoutRemovingPending()
         }
         jobQueue.removeRecord(id: id)
         refreshPending()
+        closePendingListIfEmpty()
     }
 
     /// - Returns: 被跳过（进行中不可删）的数量
@@ -234,11 +235,12 @@ final class AppModel: ObservableObject {
         }
         let skipped = protected.count
         if let active = activeCoordinator, !protected.contains(active.job.id) {
-            activeCoordinator = nil
+            dismissWizard()
             jobQueue.cancelActiveWithoutRemovingPending()
         }
         jobQueue.clearRecords(exceptIDs: protected)
         refreshPending()
+        closePendingListIfEmpty()
         return skipped
     }
 
@@ -276,14 +278,15 @@ final class AppModel: ObservableObject {
     func handleIgnore() {
         guard let coordinator = activeCoordinator else { return }
         jobQueue.markIgnored(coordinator.job)
-        activeCoordinator = nil
+        dismissWizard()
         refreshPending()
+        closePendingListIfEmpty()
     }
 
     func handleLater() {
         guard let coordinator = activeCoordinator else { return }
         jobQueue.markLater(coordinator.job)
-        activeCoordinator = nil
+        dismissWizard()
         refreshPending()
     }
 
@@ -296,9 +299,26 @@ final class AppModel: ObservableObject {
     func handleWizardFinished() {
         guard let coordinator = activeCoordinator else { return }
         jobQueue.markFinished(coordinator.job)
-        activeCoordinator = nil
+        dismissWizard()
         refreshPending()
         refreshExtractSessions()
+        closePendingListIfEmpty()
+    }
+
+    /// 清掉进行中任务并关闭 Wizard 窗口，避免停在「没有进行中的任务」。
+    func dismissWizard() {
+        activeCoordinator = nil
+        NotificationCenter.default.post(name: .dismissWizardWindow, object: nil)
+        // 通知可能尚未送达时再兜底关一次
+        DispatchQueue.main.async {
+            WindowFront.closeWizardWindow()
+        }
+    }
+
+    /// 流程结束后若已无待处理项，自动关掉待处理窗口，避免多一步手动关闭。
+    func closePendingListIfEmpty() {
+        guard pendingJobs.isEmpty else { return }
+        WindowFront.closePendingWindow()
     }
 
     func openAppSupport() {
@@ -365,6 +385,7 @@ extension AppModel: DownloadWatcherDelegate {
 
 extension Notification.Name {
     static let openWizardWindow = Notification.Name("tools.wayne.db-zip-menubar.openWizard")
+    static let dismissWizardWindow = Notification.Name("tools.wayne.db-zip-menubar.dismissWizard")
     static let openPendingListWindow = Notification.Name("tools.wayne.db-zip-menubar.openPendingList")
     static let openExtractHistoryWindow = Notification.Name("tools.wayne.db-zip-menubar.openExtractHistory")
 }
