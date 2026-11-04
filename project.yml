@@ -24,8 +24,8 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: tools.wayne.db-zip-menubar
       PRODUCT_NAME: DB Zip
-      MARKETING_VERSION: "1.0.0"
-      CURRENT_PROJECT_VERSION: "1"
+      MARKETING_VERSION: "1.1.0"
+      CURRENT_PROJECT_VERSION: "2"
       GENERATE_INFOPLIST_FILE: YES
       INFOPLIST_KEY_CFBundleDisplayName: DB Zip
       INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
