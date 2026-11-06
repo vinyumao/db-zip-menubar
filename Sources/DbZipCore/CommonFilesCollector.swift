@@ -25,11 +25,11 @@ public struct CollectedCommonFiles: Sendable, Equatable {
 
 /// 对齐旧脚本 `collect_common_files`：仅一层。
 public enum CommonFilesCollector {
-    private static let logPattern = #"_d([0-9]{8})(_[0-9]+)?\.log$"#
+    private static let logPattern = #"_d([0-9]{8})([_.][0-9]+)?\.log$"#
     /// 常用文件模式：按文件名日期取最近若干天的全部分片。
     public static let recentLogDayLimit = 5
 
-    public static func collect(in root: URL, fileManager: FileManager = .default) throws -> CollectedCommonFiles {
+    public static func collect(in root: URL, fileManager: FileManager = .default, logDays: Int = recentLogDayLimit) throws -> CollectedCommonFiles {
         let entries = try fileManager.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
@@ -42,7 +42,7 @@ public enum CommonFilesCollector {
         var siMtime: Date = .distantPast
         var logCandidates: [(url: URL, date: String)] = []
 
-        for url in entries {
+        for url in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey])
             guard values.isRegularFile == true else { continue }
             let name = url.lastPathComponent
@@ -66,7 +66,7 @@ public enum CommonFilesCollector {
         let recentDates = Array(
             Set(logCandidates.map(\.date))
                 .sorted(by: >)
-                .prefix(recentLogDayLimit)
+                .prefix(max(1, min(365, logDays)))
         )
         let recentDateSet = Set(recentDates)
         let logFiles = logCandidates
@@ -79,7 +79,13 @@ public enum CommonFilesCollector {
         let latestDate = recentDates.first
 
         var files: [URL] = []
-        if let dbFile { files.append(dbFile) }
+        if let dbFile {
+            files.append(dbFile)
+            for suffix in ["-wal", "-shm"] {
+                let companion = URL(fileURLWithPath: dbFile.path + suffix)
+                if fileManager.fileExists(atPath: companion.path) { files.append(companion) }
+            }
+        }
         if let siFile { files.append(siFile) }
         files.append(contentsOf: logFiles)
 

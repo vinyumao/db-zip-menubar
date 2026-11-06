@@ -40,7 +40,8 @@ struct SettingsView: View {
                 Button("清理…") {
                     prepareCleanup()
                 }
-                .disabled(cleanupBusy)
+                .disabled(cleanupBusy || appModel.activeCoordinator != nil)
+                if appModel.activeCoordinator != nil { Text("请先结束当前处理流程再清理。").font(.caption).foregroundStyle(.secondary) }
             }
 
             Section("ADB") {
@@ -62,6 +63,19 @@ struct SettingsView: View {
                         .frame(width: 52)
                     Text("秒后入队")
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("处理预设") {
+                if appModel.presets.isEmpty {
+                    Text("在复制预览或成功页保存常用的处理方案。").foregroundStyle(.secondary)
+                }
+                ForEach(appModel.presets) { preset in
+                    HStack {
+                        Text(preset.name)
+                        Spacer()
+                        Button("删除", role: .destructive) { appModel.deletePreset(preset) }
+                    }
                 }
             }
 
@@ -88,7 +102,7 @@ struct SettingsView: View {
             }
         }
         .padding()
-        .frame(width: 560, height: 520)
+        .frame(width: 620, height: 680)
         .onAppear { draft = appModel.settings }
         .confirmationDialog(
             cleanupConfirmTitle,
@@ -128,7 +142,7 @@ struct SettingsView: View {
         }
         let names = plan.folders.prefix(8).map(\.lastPathComponent).joined(separator: "、")
         let more = plan.folders.count > 8 ? " 等共 \(plan.folders.count) 个" : ""
-        return "将永久删除：\(names)\(more)\n\n\(cleanupScope.detail)。正在使用的解压目录会自动跳过。"
+        return "将永久删除：\(names)\(more)\n\n\(cleanupScope.detail)。处理流程结束后才能执行清理。"
     }
 
     private func prepareCleanup() {
@@ -153,18 +167,33 @@ struct SettingsView: View {
     }
 
     private func runCleanup() {
-        guard let plan = cleanupPlan, !plan.isEmpty else { return }
+        guard let plan = cleanupPlan, !plan.isEmpty, appModel.activeCoordinator == nil else {
+            cleanupResultText = "请先结束当前处理流程，再清理目录。"
+            return
+        }
         cleanupBusy = true
-        defer {
-            cleanupBusy = false
-            cleanupPlan = nil
+        appModel.maintenanceBusy = true
+        // Revalidate against the current wizard, not just the confirmation snapshot.
+        let protected = appModel.activeCoordinator?.extractDirectory?.standardizedFileURL.path
+        let safe = DbCleanupPlan(folders: plan.folders.filter { folder in
+            guard let protected else { return true }
+            return protected != folder.path && !protected.hasPrefix(folder.path + "/")
+        }, scope: plan.scope)
+        Task {
+            defer {
+                cleanupBusy = false
+                appModel.maintenanceBusy = false
+                cleanupPlan = nil
+                appModel.refreshExtractSessions()
+            }
+            let result = try? await runInBackground { DbRootCleanup.execute(plan: safe) }
+            guard let result else { cleanupResultText = "清理未完成"; return }
+            var parts = ["已删除 \(result.deleted.count) 个目录。"]
+            if !result.failed.isEmpty {
+                parts.append("失败：" + result.failed.map { "\($0.path)：\($0.message)" }.joined(separator: "\n"))
+            }
+            cleanupResultText = parts.joined(separator: "\n")
         }
-        let result = DbRootCleanup.execute(plan: plan)
-        var parts: [String] = ["已删除 \(result.deleted.count) 个目录。"]
-        if !result.failed.isEmpty {
-            parts.append("失败 \(result.failed.count) 个：\(result.failed.map(\.path).joined(separator: "、"))")
-        }
-        cleanupResultText = parts.joined(separator: "\n")
     }
 
     private func pickDirectory(onPick: (String) -> Void) {

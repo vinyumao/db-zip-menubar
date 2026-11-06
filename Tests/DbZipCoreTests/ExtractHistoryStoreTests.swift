@@ -20,14 +20,14 @@ final class ExtractHistoryStoreTests: XCTestCase {
         XCTAssertEqual(listed.first?.sourceFileName, "keep.zip")
     }
 
-    func testKeepsAtMostTenAndValidateRemovesMissing() throws {
+    func testKeepsConfiguredLimitAndValidateRemovesMissing() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let store = ExtractHistoryStore(appSupportDirectory: root)
         var dirs: [URL] = []
-        for i in 1...12 {
+        for i in 1...(ExtractHistoryStore.maxSessions + 2) {
             let dir = root.appendingPathComponent("e\(i)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             dirs.append(dir)
@@ -35,13 +35,13 @@ final class ExtractHistoryStoreTests: XCTestCase {
         }
 
         let listed = store.list()
-        XCTAssertEqual(listed.count, 10)
-        XCTAssertEqual(listed.first?.sourceFileName, "f12.zip")
+        XCTAssertEqual(listed.count, ExtractHistoryStore.maxSessions)
+        XCTAssertEqual(listed.first?.sourceFileName, "f\(ExtractHistoryStore.maxSessions + 2).zip")
         XCTAssertFalse(listed.contains { $0.sourceFileName == "f1.zip" || $0.sourceFileName == "f2.zip" })
 
         let victim = listed[0]
         try FileManager.default.removeItem(at: victim.extractURL)
         XCTAssertFalse(store.validateAndKeep(victim))
-        XCTAssertEqual(store.list().count, 9)
+        XCTAssertEqual(store.list().count, ExtractHistoryStore.maxSessions - 1)
     }
 }

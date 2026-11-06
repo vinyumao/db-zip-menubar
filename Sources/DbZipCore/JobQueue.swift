@@ -29,9 +29,9 @@ public final class JobQueue {
     public func ingestDetected(url: URL, force: Bool = false) throws -> PendingJob? {
         let identity = try FileIdentity(url: url)
         if ignoreStore.isIgnored(identity) { return nil }
-        if pendingStore.contains(path: identity.path) {
-            notifyCount()
-            return nil
+        if let existing = pendingStore.all().first(where: { $0.identity.path == identity.path }) {
+            if existing.identity == identity || existing.id == activeJobID { return nil }
+            pendingStore.remove(id: existing.id)
         }
         if !force && !ZipMatcher.isTargetZip(url.lastPathComponent) {
             return nil
@@ -50,6 +50,12 @@ public final class JobQueue {
     public func ingestManual(url: URL, force: Bool) throws -> PendingJob {
         let identity = try FileIdentity(url: url)
         if let existing = pendingStore.all().first(where: { $0.identity.path == identity.path }) {
+            if existing.identity != identity, existing.id != activeJobID {
+                let updated = PendingJob(identity: identity, fileName: url.lastPathComponent, forced: force)
+                pendingStore.upsert(updated)
+                notifyCount()
+                return updated
+            }
             if force && !existing.forced {
                 let updated = PendingJob(
                     id: existing.id,

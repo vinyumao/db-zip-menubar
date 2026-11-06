@@ -13,12 +13,14 @@ public struct FileIdentity: Codable, Hashable, Sendable, Equatable {
     }
 
     public init(url: URL, fileManager: FileManager = .default) throws {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard let size = values.fileSize else {
+        // URL resource values are cached on the URL instance. Pending jobs and
+        // extraction validation must observe the current file on every call.
+        let values = try fileManager.attributesOfItem(atPath: url.path)
+        guard let size = values[.size] as? NSNumber else {
             throw CocoaError(.fileReadUnknown)
         }
-        let mtime = values.contentModificationDate?.timeIntervalSince1970 ?? 0
-        self.init(path: url.path, fileSize: Int64(size), mtime: mtime)
+        let mtime = (values[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        self.init(path: url.path, fileSize: size.int64Value, mtime: mtime)
     }
 
     public static func normalizePath(_ path: String) -> String {

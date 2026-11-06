@@ -6,6 +6,7 @@ public enum WizardStep: String, Sendable, Equatable {
     case unpacking
     case chooseDestination
     case contentMode
+    case preview
     case choosePath
     case chooseDevice
     case copying
@@ -89,18 +90,28 @@ public final class WizardCoordinator: ObservableObject {
     @Published public var pathCopyCompletedInBoth = false
 
     public let settings: AppSettings
-    private let unpackService: UnpackService
+    private let unpackService: UnpackService?
     private let localCopy: LocalCopyService
     private let history: HistoryStore
     private let extractHistory: ExtractHistoryStore
     private let makeAdb: () -> AdbClient
+    @Published public var contentPlan: ContentPlan?
+    @Published public var selectedItemIDs: Set<String> = []
+    @Published public var previewLoading = false
+    @Published public var logDays = 5
+    @Published public var preparing = false
+    @Published public var cancelling = false
+    private var previewGeneration = UUID()
+    private var selectedFiles: [URL] = []
+    private var operation = OperationControl()
+    private var operationStarted = Date()
     private var autoCopyAfterUnpack = false
     private var bothPathDescription: String?
 
     public init(
         job: PendingJob,
         settings: AppSettings,
-        unpackService: UnpackService = UnpackService(),
+        unpackService: UnpackService? = nil,
         localCopy: LocalCopyService = LocalCopyService(),
         history: HistoryStore,
         extractHistory: ExtractHistoryStore,
@@ -118,7 +129,6 @@ public final class WizardCoordinator: ObservableObject {
         } else if job.forced, ZipMatcher.mismatchReason(for: job.fileName) != nil {
             self.mismatchReason = ZipMatcher.mismatchReason(for: job.fileName)
         }
-        refreshLastActionAvailability()
     }
 
     /// 从已解压目录继续：跳过确认与解压，直接选复制目标。
@@ -158,33 +168,84 @@ public final class WizardCoordinator: ObservableObject {
         return coordinator
     }
 
-    public func refreshLastActionAvailability() {
-        lastActionAvailability = history.lastActionAvailability { [makeAdb] in
-            let result = try makeAdb().listReadyDevices()
-            return Set(result.devices.map(\.sn))
+    public func refreshLastActionAvailability() async {
+        let history = self.history
+        let adb = makeAdb().withControl(operation)
+        lastActionAvailability = (try? await runInBackground {
+            history.lastActionAvailability {
+                Set(try adb.listReadyDevices().devices.map(\.sn))
+            }
+        }) ?? .none
+        lastActionBlockReason = lastActionAvailability.blockReason
+    }
+
+    private func beginOperation() {
+        cancelling = false
+        success = nil
+        partialSuccess = nil
+        errorMessage = nil
+        operationStarted = Date()
+        operation = OperationControl { [weak self] line in
+            Task { @MainActor in self?.appendLog(line) }
         }
-        if case .available = lastActionAvailability {
-            lastActionBlockReason = nil
-        } else if case .unavailable(_, let reason) = lastActionAvailability {
-            lastActionBlockReason = reason
-        } else {
-            lastActionBlockReason = nil
+    }
+
+    public func cancelOperation() {
+        cancelling = true
+        operation.cancel()
+        appendLog("正在取消；本地复制将在当前文件完成后停止。")
+    }
+
+    public func startPreset(_ preset: ProcessingPreset) async {
+        guard step == .confirm, !preparing else { return }
+        preparing = true
+        beginOperation()
+        defer { preparing = false }
+        if preset.kind != .path, let device = preset.device {
+            let adb = makeAdb().withControl(operation)
+            do {
+                let devices = try await runInBackground { try adb.listReadyDevices().devices }
+                guard devices.contains(where: { $0.sn == device.sn }) else {
+                    lastActionBlockReason = "预设设备未连接，请连接后重试。"; return
+                }
+            } catch { lastActionBlockReason = error.localizedDescription; return }
         }
+        guard step == .confirm, !operation.isCancelled else { return }
+        destinationKind = preset.kind
+        selectedPath = preset.path
+        selectedDevice = preset.device
+        contentMode = preset.mode
+        logDays = preset.logDays
+        autoCopyAfterUnpack = true
+        await runUnpack()
+    }
+
+    public func makePreset(name: String) throws -> ProcessingPreset {
+        guard let destinationKind, let contentMode else { throw CopyError.invalidSelection("请先选择复制目标和内容模式") }
+        return ProcessingPreset(name: name, kind: destinationKind, mode: contentMode,
+                                path: selectedPath, device: selectedDevice, logDays: logDays)
     }
 
     public func appendLog(_ line: String) {
         logLines.append(line)
+        if logLines.count > 200 { logLines.removeFirst(logLines.count - 200) }
     }
 
     /// 自定义向导：解压后进入选目标。
     public func startUnpack() async {
+        guard !step.isIrreversibleInProgress, !preparing else { return }
         autoCopyAfterUnpack = false
         await runUnpack()
     }
 
-    /// 按上次成功配方：校验通过后解压并直接复制。
+    /// 按上次成功配方：校验通过后解压并进入文件预览。
     public func startLastSuccessfulAction() async {
-        refreshLastActionAvailability()
+        guard step == .confirm, !preparing else { return }
+        preparing = true
+        beginOperation()
+        defer { preparing = false }
+        await refreshLastActionAvailability()
+        guard step == .confirm, !operation.isCancelled else { return }
         guard case .available(let action) = lastActionAvailability else {
             lastActionBlockReason = lastActionAvailability.blockReason
                 ?? "上次处理不可用，请自定义处理。"
@@ -221,16 +282,18 @@ public final class WizardCoordinator: ObservableObject {
     }
 
     private func runUnpack() async {
+        beginOperation()
         step = .unpacking
         appendLog("开始处理: \(job.fileName)")
         do {
-            let service = unpackService
+            let service = unpackService ?? UnpackService(processRunner: FoundationProcessRunner(control: operation))
             let zipURL = job.fileURL
             let dbRoot = settings.dbRootDirectoryURL
-            let result = try await runOffMain {
+            let result = try await runInBackground {
                 try service.unpack(zipURL: zipURL, dbRoot: dbRoot)
             }
             extractDirectory = result.extractDirectory
+            if let warning = result.warning { appendLog(warning) }
             extractHistory.record(
                 extractPath: result.extractDirectory.path,
                 sourceFileName: job.fileName
@@ -258,6 +321,8 @@ public final class WizardCoordinator: ObservableObject {
         selectedPath = nil
         selectedDevice = nil
         contentMode = nil
+        contentPlan = nil
+        selectedFiles = []
         switch kind {
         case .path, .both:
             step = .choosePath
@@ -282,29 +347,47 @@ public final class WizardCoordinator: ObservableObject {
     }
 
     public func chooseContentMode(_ mode: ContentMode) async {
+        guard let extractDirectory else { return }
         contentMode = mode
-        if mode == .common, let extractDirectory {
-            do {
-                let collected = try CommonFilesCollector.collect(in: extractDirectory)
-                if collected.isEmpty {
-                    autoCopyAfterUnpack = false
-                    errorMessage = CopyError.noCommonFiles.localizedDescription
-                    appendLog(errorMessage ?? "")
-                    step = .failure
-                    return
-                }
-            } catch {
-                autoCopyAfterUnpack = false
-                errorMessage = error.localizedDescription
-                step = .failure
-                return
-            }
+        step = .preview
+        previewLoading = true
+        errorMessage = nil
+        contentPlan = nil
+        let generation = UUID()
+        previewGeneration = generation
+        let days = logDays
+        do {
+            let plan = try await runInBackground { try ContentPlanner.make(root: extractDirectory, mode: mode, logDays: days) }
+            guard previewGeneration == generation, step == .preview else { return }
+            contentPlan = plan
+            selectedItemIDs = Set(plan.items.map(\.id))
+            if plan.items.isEmpty { errorMessage = "没有符合规则的文件，请返回选择整目录或调整日志天数。" }
+        } catch {
+            guard previewGeneration == generation else { return }
+            errorMessage = error.localizedDescription
         }
+        if previewGeneration == generation { previewLoading = false }
+    }
+
+    public func confirmPreview() async {
+        guard step == .preview, !previewLoading, let contentPlan else { return }
+        if contentMode == .common, contentPlan.logDays != logDays {
+            logDays = min(365, max(1, logDays))
+            await chooseContentMode(.common)
+            errorMessage = "已按新的日志天数重新筛选，请确认文件清单。"
+            return
+        }
+        do { selectedFiles = try contentPlan.selectedFiles(ids: selectedItemIDs) }
+        catch { errorMessage = error.localizedDescription; return }
         await performCopy()
     }
 
     public func goBack() {
         switch step {
+        case .preview:
+            previewGeneration = UUID()
+            previewLoading = false
+            step = .contentMode
         case .choosePath:
             step = .chooseDestination
             destinationKind = nil
@@ -356,6 +439,8 @@ public final class WizardCoordinator: ObservableObject {
             await startUnpack()
         } else if contentMode == nil || (selectedPath == nil && selectedDevice == nil) {
             step = .chooseDestination
+        } else if selectedFiles.isEmpty, let contentMode {
+            await chooseContentMode(contentMode)
         } else {
             await performCopy()
         }
@@ -384,6 +469,8 @@ public final class WizardCoordinator: ObservableObject {
             step = .failure
             return
         }
+        guard !step.isIrreversibleInProgress, !selectedFiles.isEmpty else { return }
+        beginOperation()
         step = .copying
         errorMessage = nil
         do {
@@ -432,10 +519,10 @@ public final class WizardCoordinator: ObservableObject {
                     let destPath = try await copyPathSegment()
                     bothPathDescription = destPath
                     pathCopyCompletedInBoth = true
-                    selectedDevice = nil
                     appendLog("本地复制完成，请选择设备继续")
                     autoCopyAfterUnpack = false
                     step = .chooseDevice
+                    if selectedDevice != nil { await performCopy() }
                 } else {
                     let resolve = try await copyDeviceSegment()
                     guard let selectedDevice else { throw AdbError.commandFailed("未选设备") }
@@ -468,6 +555,12 @@ public final class WizardCoordinator: ObservableObject {
                 errorMessage = message
                 step = .failure
             }
+        }
+        if let directory = self.extractDirectory {
+            let status = step == .success ? "成功" : (step == .chooseDevice ? "本地完成，待推送" : (step == .partialSuccess ? "部分完成" : "失败"))
+            extractHistory.recordOutcome(extractPath: directory.path, status: status,
+                destination: success?.destinationDescription ?? bothPathDescription ?? selectedPath ?? selectedDevice?.displayName,
+                error: errorMessage ?? partialSuccess?.deviceError, duration: Date().timeIntervalSince(operationStarted))
         }
     }
 
@@ -552,42 +645,23 @@ public final class WizardCoordinator: ObservableObject {
 
     private func copyLocal(mode: ContentMode, extract: URL, destBase: URL) async throws -> URL {
         let localCopy = self.localCopy
-        return try await runOffMain {
-            switch mode {
-            case .common:
-                let collected = try CommonFilesCollector.collect(in: extract)
-                guard !collected.isEmpty else { throw CopyError.noCommonFiles }
-                return try localCopy.copyCommonFiles(collected.files, to: destBase)
-            case .tree:
-                return try localCopy.copyTreeChildren(from: extract, to: destBase)
-            }
-        }
+        let files = selectedFiles
+        let control = operation
+        return try await runInBackground { try localCopy.copyFiles(files, to: destBase, control: control) }
     }
 
     private func copyDevice(mode: ContentMode, extract: URL, device: AdbDevice) async throws -> AdbResolveResult {
-        let adb = makeAdb()
-        let service = DeviceCopyService(adb: adb)
-        return try await runOffMain {
-            switch mode {
-            case .common:
-                let collected = try CommonFilesCollector.collect(in: extract)
-                guard !collected.isEmpty else { throw CopyError.noCommonFiles }
-                return try service.copyCommonFiles(collected.files, sn: device.sn)
-            case .tree:
-                return try service.copyTreeChildren(from: extract, sn: device.sn)
+        let adb = makeAdb().withControl(operation)
+        let files = selectedFiles
+        let control = operation
+        return try await runInBackground {
+            let root = try adb.resolveDeviceRoot(sn: device.sn)
+            for (index, file) in files.enumerated() {
+                try control.checkCancellation()
+                control.onProgress("设备文件 \(index + 1)/\(files.count)：\(file.lastPathComponent)")
+                try adb.push(sn: device.sn, localURL: file, remoteDir: root.remoteRoot)
             }
-        }
-    }
-}
-
-private func runOffMain<T>(_ work: @escaping () throws -> T) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                continuation.resume(returning: try work())
-            } catch {
-                continuation.resume(throwing: error)
-            }
+            return root
         }
     }
 }

@@ -5,6 +5,7 @@ public enum CopyError: LocalizedError, Sendable {
     case copyFailed(URL, URL, String)
     case emptySource
     case noCommonFiles
+    case invalidSelection(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ public enum CopyError: LocalizedError, Sendable {
             return "解压目录为空，无内容可复制"
         case .noCommonFiles:
             return "没有可复制的常用文件"
+        case .invalidSelection(let message): return message
         }
     }
 }
@@ -31,42 +33,41 @@ public struct LocalCopyService {
     @discardableResult
     public func copyCommonFiles(_ files: [URL], to destinationBase: URL) throws -> URL {
         guard !files.isEmpty else { throw CopyError.noCommonFiles }
-        let destination = try allocateRunDirectory(under: destinationBase)
-        for file in files {
-            let target = destination.appendingPathComponent(file.lastPathComponent)
-            do {
-                if fileManager.fileExists(atPath: target.path) {
-                    try fileManager.removeItem(at: target)
-                }
-                try fileManager.copyItem(at: file, to: target)
-            } catch {
-                throw CopyError.copyFailed(file, destination, error.localizedDescription)
-            }
-        }
-        return destination
+        return try copyFiles(files, to: destinationBase)
     }
 
-    /// 在 `destinationBase` 下分配编号子目录后复制整树子项，返回实际目标目录。
     @discardableResult
     public func copyTreeChildren(from source: URL, to destinationBase: URL) throws -> URL {
-        let destination = try allocateRunDirectory(under: destinationBase)
-        let children = try fileManager.contentsOfDirectory(
-            at: source,
-            includingPropertiesForKeys: nil,
-            options: []
-        )
-        guard !children.isEmpty else { throw CopyError.emptySource }
-        for item in children {
-            let target = destination.appendingPathComponent(item.lastPathComponent)
-            do {
-                if fileManager.fileExists(atPath: target.path) {
-                    try fileManager.removeItem(at: target)
-                }
-                try fileManager.copyItem(at: item, to: target)
-            } catch {
-                throw CopyError.copyFailed(item, destination, error.localizedDescription)
+        let children = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+        return try copyFiles(children, to: destinationBase)
+    }
+
+    public func copyFiles(_ files: [URL], to base: URL, control: OperationControl? = nil) throws -> URL {
+        guard !files.isEmpty else { throw CopyError.emptySource }
+        let normalizedBase = base.resolvingSymlinksInPath().standardizedFileURL.path
+        for source in files {
+            let path = source.resolvingSymlinksInPath().standardizedFileURL.path
+            guard normalizedBase != path, !normalizedBase.hasPrefix(path + "/") else {
+                throw CopyError.invalidSelection("目标目录不能位于源文件夹内部")
             }
+            _ = try FileManifest.entries(at: source)
         }
+        try ensureDirectory(base)
+        let staging = base.appendingPathComponent(".dbzip-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: staging) }
+        for (index, file) in files.enumerated() {
+            try control?.checkCancellation()
+            control?.onProgress("本地复制 \(index + 1)/\(files.count)：\(file.lastPathComponent)")
+            let target = staging.appendingPathComponent(file.lastPathComponent)
+            do { try fileManager.copyItem(at: file, to: target) }
+            catch { throw CopyError.copyFailed(file, target, error.localizedDescription) }
+        }
+        try control?.checkCancellation()
+        let destination = try allocateRunDirectory(under: base)
+        // The reserved numbered directory is empty; publish the completed tree in one move.
+        try fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: staging, to: destination)
         return destination
     }
 

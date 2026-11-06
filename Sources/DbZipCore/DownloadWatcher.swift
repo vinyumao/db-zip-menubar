@@ -19,8 +19,9 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
     private var source: DispatchSourceFileSystemObject?
     private var directoryFD: Int32 = -1
     private let queue = DispatchQueue(label: "tools.wayne.db-zip-menubar.watcher")
-    private var knownPaths: Set<String> = []
-    private var pendingSizes: [String: (size: Int64, since: Date)] = [:]
+    private var knownFiles: [String: FileIdentity] = [:]
+    private var pendingSizes: [String: (identity: FileIdentity, since: Date)] = [:]
+    private var generation = UUID()
     private var started = false
     private var timer: DispatchSourceTimer?
     private var hasAccess = false
@@ -29,12 +30,12 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
 
     public init(fileManager: FileManager = .default, stabilitySeconds: Double = 2.5) {
         self.fileManager = fileManager
-        self.stabilitySeconds = stabilitySeconds
+        self.stabilitySeconds = max(0.1, stabilitySeconds)
         super.init()
     }
 
     public func updateStabilitySeconds(_ seconds: Double) {
-        queue.async { self.stabilitySeconds = seconds }
+        queue.async { self.stabilitySeconds = max(0.1, seconds) }
     }
 
     /// - Parameter confirmedAccess: 调用方已在主线程完成单次授权探测时传 true。
@@ -59,6 +60,7 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
             }
 
             self.seedKnownFiles(in: directory)
+            guard self.hasAccess else { return }
             self.startSourceLocked(directory: directory)
             self.startPollingTimerLocked()
             self.started = true
@@ -78,10 +80,8 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
         timer = nil
         source?.cancel()
         source = nil
-        if directoryFD >= 0 {
-            close(directoryFD)
-            directoryFD = -1
-        }
+        directoryFD = -1
+        generation = UUID()
         pendingSizes.removeAll()
         started = false
         scanning = false
@@ -96,7 +96,7 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
     }
 
     private func seedKnownFiles(in directory: URL) {
-        knownPaths.removeAll()
+        knownFiles.removeAll()
         do {
             let items = try fileManager.contentsOfDirectory(
                 at: directory,
@@ -104,7 +104,9 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
                 options: [.skipsHiddenFiles]
             )
             for item in items {
-                knownPaths.insert(FileIdentity.normalizePath(item.path))
+                if DownloadTempFilter.isCandidateZipName(item.lastPathComponent), let identity = try? FileIdentity(url: item) {
+                    knownFiles[identity.path] = identity
+                }
             }
             hasAccess = true
         } catch {
@@ -125,12 +127,9 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
         src.setEventHandler { [weak self] in
             self?.scanLocked()
         }
-        src.setCancelHandler { [weak self] in
-            if let self, self.directoryFD >= 0 {
-                close(self.directoryFD)
-                self.directoryFD = -1
-            }
-        }
+        // Close this source's descriptor only after cancellation; a new source may
+        // already exist by the time this callback runs.
+        src.setCancelHandler { close(fd) }
         source = src
         src.resume()
     }
@@ -166,37 +165,18 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
             return
         }
 
-        let current = Set(items.map { FileIdentity.normalizePath($0.path) })
-        let newOnes = current.subtracting(knownPaths)
-        knownPaths = knownPaths.union(current)
-        for path in pendingSizes.keys where !current.contains(path) {
-            pendingSizes.removeValue(forKey: path)
-        }
-
-        for path in newOnes {
-            let url = URL(fileURLWithPath: path)
-            let name = url.lastPathComponent
-            guard DownloadTempFilter.isCandidateZipName(name) else { continue }
-            trackSizeLocked(url: url)
-        }
-
-        for path in pendingSizes.keys {
-            trackSizeLocked(url: URL(fileURLWithPath: path))
-        }
-    }
-
-    private func trackSizeLocked(url: URL) {
-        let path = FileIdentity.normalizePath(url.path)
-        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-              values.isRegularFile == true,
-              let size = values.fileSize else { return }
-        let size64 = Int64(size)
-        if let existing = pendingSizes[path] {
-            if existing.size != size64 {
-                pendingSizes[path] = (size64, Date())
+        var current: [String: FileIdentity] = [:]
+        for item in items where DownloadTempFilter.isCandidateZipName(item.lastPathComponent) {
+            guard let values = try? item.resourceValues(forKeys: [.isRegularFileKey]), values.isRegularFile == true,
+                  let identity = try? FileIdentity(url: item) else { continue }
+            current[identity.path] = identity
+            if knownFiles[identity.path] != identity {
+                pendingSizes[identity.path] = (identity, Date())
             }
-        } else {
-            pendingSizes[path] = (size64, Date())
+        }
+        knownFiles = current
+        for path in Array(pendingSizes.keys) where current[path] == nil {
+            pendingSizes.removeValue(forKey: path)
         }
     }
 
@@ -205,7 +185,7 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
         let now = Date()
         var ready: [URL] = []
         for (path, info) in pendingSizes {
-            if now.timeIntervalSince(info.since) >= stabilitySeconds {
+            if info.identity.fileSize > 0, now.timeIntervalSince(info.since) >= stabilitySeconds {
                 ready.append(URL(fileURLWithPath: path))
             }
         }
@@ -215,8 +195,10 @@ public final class DownloadWatcher: NSObject, @unchecked Sendable {
             guard fileManager.fileExists(atPath: path) else { continue }
             let name = url.lastPathComponent
             guard DownloadTempFilter.isCandidateZipName(name) else { continue }
+            let generation = self.generation
             DispatchQueue.main.async { [weak self] in
-                self?.delegate?.downloadWatcher(didDetectStableZip: url)
+                guard let self, self.queue.sync(execute: { self.started && self.generation == generation }) else { return }
+                self.delegate?.downloadWatcher(didDetectStableZip: url)
             }
         }
     }

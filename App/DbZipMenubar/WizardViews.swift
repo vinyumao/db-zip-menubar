@@ -11,6 +11,7 @@ struct WizardRootView: View {
         Group {
             if let coordinator = appModel.activeCoordinator {
                 WizardFlowView(coordinator: coordinator)
+                    .id(coordinator.job.id)
                     .environmentObject(appModel)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -64,6 +65,7 @@ struct WizardFlowView: View {
         case .unpacking: return "解压中"
         case .chooseDestination: return "选择复制位置"
         case .contentMode: return "内容模式"
+        case .preview: return "确认复制内容"
         case .choosePath: return "选择路径"
         case .chooseDevice:
             return coordinator.pathCopyCompletedInBoth ? "选择设备（第二步）" : "选择设备"
@@ -85,6 +87,8 @@ struct WizardFlowView: View {
             DestinationStepView(coordinator: coordinator)
         case .contentMode:
             ContentModeStepView(coordinator: coordinator)
+        case .preview:
+            ContentPreviewStepView(coordinator: coordinator)
         case .choosePath:
             PathStepView(coordinator: coordinator)
         case .chooseDevice:
@@ -110,7 +114,7 @@ private struct WizardProgressHeader: View {
         case .confirm: return 0
         case .unpacking: return 0
         case .chooseDestination, .choosePath, .chooseDevice: return 1
-        case .contentMode, .copying: return 2
+        case .contentMode, .preview, .copying: return 2
         case .success, .partialSuccess, .failure: return 2
         }
     }
@@ -119,7 +123,7 @@ private struct WizardProgressHeader: View {
         switch step {
         case .confirm, .unpacking: return "确认"
         case .chooseDestination, .choosePath, .chooseDevice: return "复制目标"
-        case .contentMode, .copying, .success, .partialSuccess, .failure: return "内容模式"
+        case .contentMode, .preview, .copying, .success, .partialSuccess, .failure: return "内容模式"
         }
     }
 
@@ -412,7 +416,7 @@ struct ConfirmStepView: View {
             )
 
             if let reason = coordinator.lastActionBlockReason,
-               case .unavailable = coordinator.lastActionAvailability {
+               !reason.isEmpty {
                 Text(reason)
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -420,6 +424,15 @@ struct ConfirmStepView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
             }
+
+            if !appModel.presets.isEmpty {
+                Menu("使用处理预设…") {
+                    ForEach(appModel.presets) { preset in
+                        Button(preset.name) { Task { await coordinator.startPreset(preset) } }
+                    }
+                }
+            }
+            if coordinator.preparing { ProgressView("检查目标…") }
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button("忽略") { appModel.handleIgnore() }
@@ -431,7 +444,8 @@ struct ConfirmStepView: View {
             }
             .padding(.top, 4)
         }
-        .onAppear { coordinator.refreshLastActionAvailability() }
+        .disabled(coordinator.preparing)
+        .task { await coordinator.refreshLastActionAvailability() }
     }
 
     @ViewBuilder
@@ -501,6 +515,8 @@ struct ProgressStepView: View {
                 }
             }
             .frame(height: min(80 + CGFloat(coordinator.logLines.count) * 16, 220))
+            Button(coordinator.cancelling ? "正在取消…" : "取消操作") { coordinator.cancelOperation() }
+                .disabled(coordinator.cancelling)
         }
     }
 }
@@ -565,7 +581,7 @@ struct ContentModeStepView: View {
                 .font(.callout)
             ChoiceCardButton(
                 title: "常用文件",
-                subtitle: "db + si + 最新日期日志分片",
+                subtitle: "DB 及配套文件 + SI + 最近日期日志",
                 systemImage: "sparkles"
             ) {
                 Task { await coordinator.chooseContentMode(.common) }
@@ -623,6 +639,13 @@ struct PathStepView: View {
 
             HStack {
                 TextField("其他路径", text: $typedPath)
+                Button("浏览…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.canCreateDirectories = true
+                    if panel.runModal() == .OK, let url = panel.url { typedPath = url.path }
+                }
                 Button("使用") {
                     let expanded = (typedPath as NSString).expandingTildeInPath
                     guard !expanded.isEmpty else { return }
@@ -640,6 +663,7 @@ struct DeviceStepView: View {
     @EnvironmentObject private var appModel: AppModel
     @State private var devices: [AdbDevice] = []
     @State private var unavailable = 0
+    @State private var unavailableDescriptions: [String] = []
     @State private var errorText: String?
     @State private var loading = false
 
@@ -670,7 +694,7 @@ struct DeviceStepView: View {
                 }
             }
             if unavailable > 0 {
-                Text("另有 \(unavailable) 台设备不可用，未列入选项")
+                Text(unavailableDescriptions.isEmpty ? "另有 \(unavailable) 台设备不可用" : unavailableDescriptions.joined(separator: "\n"))
                     .foregroundStyle(.orange)
                     .font(.caption)
             }
@@ -708,6 +732,7 @@ struct DeviceStepView: View {
             }
             HStack {
                 Button("刷新") { refresh() }
+                    .disabled(loading)
                     .buttonStyle(.bordered)
                 Spacer(minLength: 8)
                 Button(isBothSecondStep ? "跳过设备并完成" : "返回") {
@@ -720,14 +745,16 @@ struct DeviceStepView: View {
     }
 
     private func refresh() {
+        guard !loading else { return }
         loading = true
         errorText = nil
         Task {
             do {
                 let adb = AdbClient(configuredPath: appModel.settings.adbPath)
-                let result = try adb.listReadyDevices()
+                let result = try await runInBackground { try adb.listReadyDevices() }
                 devices = result.devices
                 unavailable = result.unavailableCount
+                unavailableDescriptions = result.unavailableDescriptions
             } catch {
                 errorText = error.localizedDescription
                 devices = []
@@ -772,6 +799,10 @@ struct SuccessStepView: View {
                         .buttonStyle(.bordered)
                     }
                 }
+            }
+            PresetSaveRow(coordinator: coordinator)
+            if appModel.pendingJobs.contains(where: { $0.id != coordinator.job.id }) {
+                Button("完成并处理下一项") { appModel.finishAndOpenNext() }
             }
             Button("完成") { appModel.handleWizardFinished() }
                 .keyboardShortcut(.defaultAction)

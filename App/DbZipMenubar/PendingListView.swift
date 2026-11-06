@@ -16,6 +16,15 @@ struct PendingListView: View {
                 Text("\(appModel.pendingCount)")
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button("添加 ZIP…") { appModel.chooseZipManually() }
+                if !appModel.presets.isEmpty {
+                    Menu("批量预设…") {
+                        ForEach(appModel.presets) { preset in
+                            Button(preset.name) { appModel.startBatch(preset: preset) }
+                        }
+                    }
+                    .disabled(appModel.pendingJobs.isEmpty || appModel.activeCoordinator != nil)
+                }
                 Button("清空全部", role: .destructive) {
                     confirmClear = true
                 }
@@ -30,7 +39,7 @@ struct PendingListView: View {
                     Spacer()
                     Text("暂无待处理项")
                         .foregroundStyle(.secondary)
-                    Text("命中监听或「选择 zip…」后会出现在这里。")
+                    Text("可将多个 ZIP 拖到此窗口，或点击「添加 ZIP…」。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -85,7 +94,11 @@ struct PendingListView: View {
                 .listStyle(.inset)
             }
         }
-        .frame(minWidth: 420, minHeight: 360)
+        .frame(minWidth: 520, minHeight: 360)
+        .dropDestination(for: URL.self) { urls, _ in
+            appModel.enqueueFiles(urls)
+            return !urls.isEmpty
+        }
         .confirmationDialog("清空全部待处理记录？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空", role: .destructive) {
                 let skipped = appModel.clearPendingRecords()

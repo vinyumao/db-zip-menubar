@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 public struct AppPaths {
@@ -36,34 +37,12 @@ public enum UnpackError: LocalizedError, Sendable {
 public struct UnpackResult: Sendable, Equatable {
     public var extractDirectory: URL
     public var movedZip: URL
+    public var warning: String?
 
-    public init(extractDirectory: URL, movedZip: URL) {
+    public init(extractDirectory: URL, movedZip: URL, warning: String? = nil) {
         self.extractDirectory = extractDirectory
         self.movedZip = movedZip
-    }
-}
-
-public protocol ProcessRunning {
-    @discardableResult
-    func run(executable: URL, arguments: [String]) throws -> (exitCode: Int32, stdout: String, stderr: String)
-}
-
-public struct FoundationProcessRunner: ProcessRunning {
-    public init() {}
-
-    public func run(executable: URL, arguments: [String]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        try process.run()
-        process.waitUntilExit()
-        let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return (process.terminationStatus, stdout, stderr)
+        self.warning = warning
     }
 }
 
@@ -98,39 +77,34 @@ public struct UnpackService {
             throw UnpackError.createDirectoryFailed(targetDir, error.localizedDescription)
         }
 
-        let originalName = zipURL.lastPathComponent
-        var destinationZip = targetDir.appendingPathComponent(originalName)
-        if fileManager.fileExists(atPath: destinationZip.path) {
-            let base = (originalName as NSString).deletingPathExtension
-            let suffix = Self.timeSuffix(date: dateProvider())
-            destinationZip = targetDir.appendingPathComponent("\(base)_\(suffix).zip")
+        // Keep the source in place until extraction is fully committed, so retries and
+        // restarts can always use the original pending-job path.
+        let identity = try FileIdentity(url: zipURL)
+        let base = zipURL.deletingPathExtension().lastPathComponent
+        var extractDir = targetDir.appendingPathComponent(base, isDirectory: true)
+        var index = 1
+        while fileManager.fileExists(atPath: extractDir.path) {
+            extractDir = targetDir.appendingPathComponent("\(base)_\(index)", isDirectory: true)
+            index += 1
         }
-
-        let extractBase = (destinationZip.lastPathComponent as NSString).deletingPathExtension
-        let extractDir = targetDir.appendingPathComponent(extractBase, isDirectory: true)
-        do {
-            try fileManager.createDirectory(at: extractDir, withIntermediateDirectories: true)
-        } catch {
-            throw UnpackError.createDirectoryFailed(extractDir, error.localizedDescription)
+        let staging = targetDir.appendingPathComponent(".dbzip-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: staging) }
+        let validation = try processRunner.run(executable: URL(fileURLWithPath: "/usr/bin/unzip"), arguments: ["-tq", zipURL.path])
+        guard validation.exitCode == 0 else {
+            throw UnpackError.extractFailed("ZIP 校验失败：" + validation.stdout + validation.stderr)
         }
-
-        do {
-            try fileManager.moveItem(at: zipURL, to: destinationZip)
-        } catch {
-            throw UnpackError.moveFailed(zipURL, destinationZip, error.localizedDescription)
+        try extract(zip: zipURL, to: staging)
+        guard try FileIdentity(url: zipURL) == identity else {
+            throw UnpackError.extractFailed("源文件仍在变化，请等待下载完成后重试")
         }
-
-        try extract(zip: destinationZip, to: extractDir)
-
-        do {
-            try fileManager.removeItem(at: destinationZip)
-        } catch {
-            throw UnpackError.deleteZipFailed(destinationZip, error.localizedDescription)
-        }
-
-        // 默认不再自动打开访达；由 UI 按需调用 openFinder / UnpackService.openInFinder
+        // Never merge into an existing extraction directory.
+        try fileManager.moveItem(at: staging, to: extractDir)
+        var warning: String?
+        do { try fileManager.removeItem(at: zipURL) }
+        catch { warning = "解压成功，但原 ZIP 未能删除：\(error.localizedDescription)" }
         openFinder(extractDir)
-        return UnpackResult(extractDirectory: extractDir, movedZip: destinationZip)
+        return UnpackResult(extractDirectory: extractDir, movedZip: zipURL, warning: warning)
     }
 
     public static func dayFolderName(date: Date, calendar: Calendar = .current) -> String {
@@ -168,15 +142,6 @@ public struct UnpackService {
     }
 
     public static func openInFinder(_ folder: URL) {
-        let script = """
-        tell application "Finder"
-            activate
-            make new Finder window to POSIX file "\(folder.path)"
-        end tell
-        """
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        try? process.run()
+        DispatchQueue.main.async { NSWorkspace.shared.open(folder) }
     }
 }

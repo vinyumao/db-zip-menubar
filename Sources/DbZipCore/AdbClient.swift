@@ -1,6 +1,6 @@
 import Foundation
 
-public struct AdbDevice: Sendable, Hashable, Equatable, Identifiable {
+public struct AdbDevice: Sendable, Hashable, Equatable, Identifiable, Codable {
     public var sn: String
     public var brand: String
     public var model: String
@@ -114,19 +114,22 @@ public enum AdbDevicesParser {
 }
 
 public struct AdbClient {
-    private let processRunner: any ProcessRunning
+    private let processRunner: (any ProcessRunning)?
+    private let control: OperationControl?
     private let fileManager: FileManager
     private let configuredPath: String?
     private let pathEnvironment: String?
 
     public init(
         configuredPath: String? = nil,
-        processRunner: any ProcessRunning = FoundationProcessRunner(),
+        processRunner: (any ProcessRunning)? = nil,
+        control: OperationControl? = nil,
         fileManager: FileManager = .default,
         pathEnvironment: String? = ProcessInfo.processInfo.environment["PATH"]
     ) {
         self.configuredPath = configuredPath
         self.processRunner = processRunner
+        self.control = control
         self.fileManager = fileManager
         self.pathEnvironment = pathEnvironment
     }
@@ -149,9 +152,9 @@ public struct AdbClient {
         return nil
     }
 
-    public func listReadyDevices() throws -> (devices: [AdbDevice], unavailableCount: Int) {
+    public func listReadyDevices() throws -> (devices: [AdbDevice], unavailableCount: Int, unavailableDescriptions: [String]) {
         let adb = try requireAdb()
-        let result = try processRunner.run(executable: adb, arguments: ["devices", "-l"])
+        let result = try run(executable: adb, arguments: ["devices", "-l"])
         if result.exitCode != 0 {
             throw AdbError.commandFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
         }
@@ -177,15 +180,21 @@ public struct AdbClient {
                 )
             )
         }
-        return (devices, parsed.unavailableCount)
+        let unavailable = result.stdout.split(whereSeparator: \.isNewline).compactMap { line -> String? in
+            guard let item = AdbDevicesParser.parseLine(String(line)), item.state != "device",
+                  !line.hasPrefix("List"), !line.hasPrefix("*") else { return nil }
+            let reason = item.state == "unauthorized" ? "未授权，请在设备上确认 USB 调试" : (item.state == "offline" ? "离线，请重新连接" : item.state)
+            return "\(item.sn)：\(reason)"
+        }
+        return (devices, parsed.unavailableCount, unavailable)
     }
 
     public func mkdirP(sn: String, remoteDir: String) throws -> Bool {
         let adb = try requireAdb()
-        let command = "mkdir -p \"\(remoteDir)\" && echo __MKDIR_OK__"
-        let result = try processRunner.run(executable: adb, arguments: ["-s", sn, "shell", command])
+        let command = "mkdir -p \(Self.shellQuote(remoteDir)) && echo __MKDIR_OK__"
+        let result = try run(executable: adb, arguments: ["-s", sn, "shell", command])
         let out = (result.stdout + result.stderr).replacingOccurrences(of: "\r", with: "")
-        return out.contains("__MKDIR_OK__")
+        return result.exitCode == 0 && out.split(whereSeparator: \.isNewline).contains("__MKDIR_OK__")
     }
 
     public func resolveDeviceRoot(sn: String) throws -> AdbResolveResult {
@@ -199,53 +208,94 @@ public struct AdbClient {
     }
 
     public func push(sn: String, localURL: URL, remoteDir: String) throws {
-        let destPath = Self.remoteJoin(remoteDir, localURL.lastPathComponent)
-        // 目标已是 /sdcard/db：直接 push。
-        // 其它目录（尤其 Android/data 下项目目录）：先 push 到 /sdcard/db 再 shell cp，
-        // 避开部分机型上 adb push 直写时的 remote fchown 失败。
-        if Self.normalizeRemoteDir(remoteDir) == Self.normalizeRemoteDir(AdbPaths.fallbackRemoteDir) {
-            try pushDirect(sn: sn, localPath: localURL.path, remotePath: destPath)
-            return
-        }
-
-        guard try mkdirP(sn: sn, remoteDir: AdbPaths.fallbackRemoteDir) else {
-            throw AdbError.mkdirFailed(AdbPaths.fallbackRemoteDir)
-        }
-        let stagingPath = Self.remoteJoin(AdbPaths.fallbackRemoteDir, localURL.lastPathComponent)
-        try pushDirect(sn: sn, localPath: localURL.path, remotePath: stagingPath)
-
-        let isDirectory = localURL.hasDirectoryPath
-            || ((try? localURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true)
-        // cp 后属主是 shell、默认 600；App 在 ext_data_rw 组内，需 660 才能读写。
-        let cpCommand: String
-        if isDirectory {
-            cpCommand =
-                "rm -rf \"\(destPath)\" && cp -R \"\(stagingPath)\" \"\(destPath)\" && chmod -R ug+rwX \"\(destPath)\" && rm -rf \"\(stagingPath)\" && echo __CP_OK__"
-        } else {
-            cpCommand =
-                "cp \"\(stagingPath)\" \"\(destPath)\" && chmod 660 \"\(destPath)\" && rm -f \"\(stagingPath)\" && echo __CP_OK__"
-        }
-
+        let entries = try FileManifest.entries(at: localURL)
+        try control?.checkCancellation()
+        let token = UUID().uuidString
+        let stagingRoot = Self.remoteJoin(AdbPaths.fallbackRemoteDir, ".dbzip-" + token)
+        let staged = Self.remoteJoin(stagingRoot, localURL.lastPathComponent)
+        let destination = Self.remoteJoin(remoteDir, localURL.lastPathComponent)
+        let candidate = Self.remoteJoin(remoteDir, ".dbzip-" + token + ".new")
+        let backup = Self.remoteJoin(remoteDir, ".dbzip-" + token + ".old")
+        let q = Self.shellQuote
         let adb = try requireAdb()
-        let result = try processRunner.run(
-            executable: adb,
-            arguments: ["-s", sn, "shell", cpCommand]
-        )
-        let out = (result.stdout + result.stderr).replacingOccurrences(of: "\r", with: "")
-        if result.exitCode != 0 || !out.contains("__CP_OK__") {
+        guard try mkdirP(sn: sn, remoteDir: stagingRoot), try mkdirP(sn: sn, remoteDir: remoteDir) else {
+            throw AdbError.mkdirFailed(remoteDir)
+        }
+        defer {
+            _ = try? run(executable: adb, arguments: ["-s", sn, "shell", "rm -rf \(q(stagingRoot)) \(q(candidate))"], critical: true)
+        }
+        control?.onProgress("推送：\(localURL.lastPathComponent)")
+        try pushDirect(sn: sn, localPath: localURL.path, remotePath: staged)
+        let directory = try localURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        let copy = "cp \(directory ? "-R " : "")\(q(staged)) \(q(candidate)) && chmod \(directory ? "-R ug+rwX" : "660") \(q(candidate)) && echo __PREPARED__"
+        try shellChecked(adb: adb, sn: sn, command: copy, sentinel: "__PREPARED__")
+        control?.onProgress("校验：\(localURL.lastPathComponent)")
+        // Verify in bounded chunks to stay below the adb/shell command length limit.
+        var checks: [String] = []
+        for entry in entries {
+            try control?.checkCancellation()
+            let remote = entry.relativePath.isEmpty ? candidate : Self.remoteJoin(candidate, entry.relativePath)
+            let digest = try entry.sha256(control: control)
+            checks.append("if command -v sha256sum >/dev/null 2>&1; then v=$(sha256sum \(q(remote))) && [ \"${v%% *}\" = \(q(digest)) ] || exit 1; else [ \"$(wc -c < \(q(remote)) | tr -d '[:space:]')\" = '\(entry.bytes)' ] || exit 1; fi")
+            if checks.count == 20 {
+                try shellChecked(adb: adb, sn: sn, command: checks.joined(separator: "\n") + "\necho __VERIFIED__", sentinel: "__VERIFIED__")
+                checks.removeAll()
+            }
+        }
+        if !checks.isEmpty {
+            try shellChecked(adb: adb, sn: sn, command: checks.joined(separator: "\n") + "\necho __VERIFIED__", sentinel: "__VERIFIED__")
+        }
+        try control?.checkCancellation()
+        // Only the short rename/rollback phase is non-cancellable. Never remove the
+        // previous target until the replacement has been copied and verified.
+        let commit = """
+        if [ -e \(q(destination)) ] || [ -L \(q(destination)) ]; then mv \(q(destination)) \(q(backup)) || exit 1; fi
+        if mv \(q(candidate)) \(q(destination)); then echo __COMMITTED__; else
+          if [ -e \(q(backup)) ] || [ -L \(q(backup)) ]; then mv \(q(backup)) \(q(destination)); fi
+          exit 1
+        fi
+        """
+        do {
+            try shellChecked(adb: adb, sn: sn, command: commit, sentinel: "__COMMITTED__", critical: true)
+        } catch {
+            let restore = "if [ -e \(q(backup)) ] || [ -L \(q(backup)) ]; then rm -rf \(q(destination)) && mv \(q(backup)) \(q(destination)); fi"
+            _ = try? run(executable: adb, arguments: ["-s", sn, "shell", restore], critical: true)
+            throw AdbError.pushFailed("\(error.localizedDescription)；如设备已断开，请检查恢复副本：\(backup)")
+        }
+        _ = try? run(executable: adb, arguments: ["-s", sn, "shell", "rm -rf \(q(backup))"], critical: true)
+    }
+
+    public static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func shellChecked(adb: URL, sn: String, command: String, sentinel: String, critical: Bool = false) throws {
+        let result = try run(executable: adb, arguments: ["-s", sn, "shell", command], critical: critical)
+        guard result.exitCode == 0, result.stdout.split(whereSeparator: \.isNewline).contains(Substring(sentinel)) else {
             throw AdbError.pushFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
         }
     }
 
+    private func run(executable: URL, arguments: [String], critical: Bool = false) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        let seconds: TimeInterval = critical ? 20 : (arguments.contains("push") ? 300 : 30)
+        let runner = processRunner ?? FoundationProcessRunner(timeout: seconds, control: critical ? nil : control)
+        return try runner.run(executable: executable, arguments: arguments)
+    }
+
     private func pushDirect(sn: String, localPath: String, remotePath: String) throws {
         let adb = try requireAdb()
-        let result = try processRunner.run(
+        let result = try run(
             executable: adb,
             arguments: ["-s", sn, "push", localPath, remotePath]
         )
         if result.exitCode != 0 {
             throw AdbError.pushFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
         }
+    }
+
+    public func withControl(_ control: OperationControl) -> AdbClient {
+        AdbClient(configuredPath: configuredPath, processRunner: processRunner, control: control,
+                  fileManager: fileManager, pathEnvironment: pathEnvironment)
     }
 
     private static func normalizeRemoteDir(_ dir: String) -> String {
@@ -265,7 +315,7 @@ public struct AdbClient {
     }
 
     private func getProp(sn: String, key: String, adb: URL) throws -> String? {
-        let result = try processRunner.run(executable: adb, arguments: ["-s", sn, "shell", "getprop", key])
+        let result = try run(executable: adb, arguments: ["-s", sn, "shell", "getprop", key])
         return AdbDevicesParser.sanitizeProp(result.stdout)
     }
 

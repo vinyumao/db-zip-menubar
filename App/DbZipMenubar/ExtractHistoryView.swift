@@ -6,6 +6,15 @@ struct ExtractHistoryView: View {
     @EnvironmentObject private var appModel: AppModel
     @Environment(\.openWindow) private var openWindow
 
+    @State private var query = ""
+    private var filtered: [ExtractSession] {
+        guard !query.isEmpty else { return appModel.extractSessions }
+        return appModel.extractSessions.filter {
+            [$0.sourceFileName, $0.extractPath, $0.destination ?? "", $0.status ?? "", Self.formatTime($0.createdAt)]
+                .joined(separator: " ").localizedCaseInsensitiveContains(query)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -14,11 +23,14 @@ struct ExtractHistoryView: View {
                 Text("\(appModel.extractSessions.count)")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("取消后可继续 · 最多 10 条 · 自动校验目录")
+                Text("取消后可继续 · 最多 100 条 · 打开时校验目录")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding()
+
+            TextField("搜索业务号、设备号、日期或目标路径", text: $query)
+                .textFieldStyle(.roundedBorder).padding(.horizontal).padding(.bottom, 10)
 
             Divider()
 
@@ -35,7 +47,7 @@ struct ExtractHistoryView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 List {
-                    ForEach(appModel.extractSessions) { session in
+                    ForEach(filtered) { session in
                         HStack(alignment: .top, spacing: 12) {
                             Button {
                                 if appModel.openExtractSession(session) {
@@ -51,6 +63,14 @@ struct ExtractHistoryView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(2)
+                                    if let status = session.status {
+                                        Text(status + (session.duration.map { " · " + String(format: "%.1f 秒", $0) } ?? ""))
+                                            .font(.caption).foregroundStyle(status == "成功" ? Color.green : Color.orange)
+                                    }
+                                    if let destination = session.destination {
+                                        Text(destination).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                    if let error = session.lastError { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
                                     Text(Self.formatTime(session.createdAt))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)

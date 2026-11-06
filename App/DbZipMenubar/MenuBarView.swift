@@ -32,6 +32,9 @@ struct MenuBarView: View {
 
             Divider()
 
+            if appModel.watchingStarting {
+                Text("正在检查目录访问…")
+            }
             if appModel.settings.watchingEnabled {
                 Button("暂停监听") { appModel.stopWatching() }
             } else {
@@ -46,7 +49,7 @@ struct MenuBarView: View {
             Divider()
 
             Button("退出") {
-                NSApplication.shared.terminate(nil)
+                appModel.requestQuit()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openWizardWindow)) { _ in

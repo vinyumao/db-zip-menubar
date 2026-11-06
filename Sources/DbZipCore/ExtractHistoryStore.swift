@@ -5,6 +5,10 @@ public struct ExtractSession: Codable, Hashable, Sendable, Equatable, Identifiab
     public var extractPath: String
     public var sourceFileName: String
     public var createdAt: TimeInterval
+    public var status: String?
+    public var destination: String?
+    public var lastError: String?
+    public var duration: TimeInterval?
 
     public init(
         id: String = UUID().uuidString,
@@ -25,7 +29,7 @@ public struct ExtractSession: Codable, Hashable, Sendable, Equatable, Identifiab
 
 /// 解压完成后的会话历史：取消复制后仍可从这里继续推送/拷贝。
 public final class ExtractHistoryStore: @unchecked Sendable {
-    public static let maxSessions = 10
+    public static let maxSessions = 100
 
     private let fileURL: URL
     private let fileManager: FileManager
@@ -42,7 +46,9 @@ public final class ExtractHistoryStore: @unchecked Sendable {
         } else {
             self.sessions = []
         }
-        pruneAndTrimLocked()
+        // Do not probe protected extraction folders during app initialization.
+        // Directory validation is deferred until the history is explicitly opened.
+        sessions = Array(sessions.sorted { $0.createdAt > $1.createdAt }.prefix(Self.maxSessions))
         persistLocked()
     }
 
@@ -60,7 +66,7 @@ public final class ExtractHistoryStore: @unchecked Sendable {
         persistLocked()
     }
 
-    /// 按时间倒序；先校验目录仍存在，再截断为最多 10 条。
+    /// 按时间倒序；先校验目录仍存在，再截断为最多 100 条。
     public func list(existingOnly: Bool = true) -> [ExtractSession] {
         lock.lock()
         defer { lock.unlock() }
@@ -77,6 +83,17 @@ public final class ExtractHistoryStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         sessions.removeAll { $0.id == id }
+        persistLocked()
+    }
+
+    public func recordOutcome(extractPath: String, status: String, destination: String?, error: String?, duration: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = sessions.firstIndex(where: { $0.extractPath == extractPath }) else { return }
+        sessions[index].status = status
+        sessions[index].destination = destination
+        sessions[index].lastError = error
+        sessions[index].duration = duration
         persistLocked()
     }
 

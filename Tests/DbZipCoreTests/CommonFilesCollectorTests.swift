@@ -37,8 +37,8 @@ final class CommonFilesCollectorTests: XCTestCase {
             ]
         )
         XCTAssertFalse(result.logFiles.contains { $0.lastPathComponent == "app_d20260101.log" })
-        XCTAssertEqual(result.files.count, 8)
-        XCTAssertFalse(result.files.contains { $0.lastPathComponent == "new.db-wal" })
+        XCTAssertEqual(result.files.count, 9)
+        XCTAssertTrue(result.files.contains { $0.lastPathComponent == "new.db-wal" })
     }
 
     func testEmptyWhenNoCommonFiles() throws {

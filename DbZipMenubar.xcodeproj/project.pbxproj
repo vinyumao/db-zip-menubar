@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		17AB984A621520BA5E66D050 /* ExtractHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131000ED540178FA27B9097A /* ExtractHistoryView.swift */; };
+		1922347F0430FDF89B0E418E /* ContentPreviewStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6BF8E7731D88ECC42EA636A /* ContentPreviewStepView.swift */; };
 		206D7A1C116D3EA4770939DB /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CC0C3FEC74B5EC48E64A81 /* AppModel.swift */; };
 		6431A27CE61C608415720741 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FE03DA222D61FE2176C9FCA /* SettingsView.swift */; };
 		7DAB8C1C93733038BA78A9B0 /* DbZipMenubarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C753B4057D043278400B96D0 /* DbZipMenubarApp.swift */; };
@@ -26,6 +27,7 @@
 		55CC0C3FEC74B5EC48E64A81 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5FE03DA222D61FE2176C9FCA /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		903AEFDF098AB416F672006A /* DbZipMenubar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DbZipMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A6BF8E7731D88ECC42EA636A /* ContentPreviewStepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentPreviewStepView.swift; sourceTree = "<group>"; };
 		B2468AAD9EB5AA6CE54B7F90 /* WizardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WizardViews.swift; sourceTree = "<group>"; };
 		B4104FFAD782674A008C00A5 /* db-zip-menubar */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "db-zip-menubar"; path = .; sourceTree = SOURCE_ROOT; };
 		C753B4057D043278400B96D0 /* DbZipMenubarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DbZipMenubarApp.swift; sourceTree = "<group>"; };
@@ -51,6 +53,7 @@
 			children = (
 				55CC0C3FEC74B5EC48E64A81 /* AppModel.swift */,
 				EE7B918EB619D5469328A568 /* Assets.xcassets */,
+				A6BF8E7731D88ECC42EA636A /* ContentPreviewStepView.swift */,
 				FCE42A925693AEAE71AF1858 /* DbZipMenubar.entitlements */,
 				C753B4057D043278400B96D0 /* DbZipMenubarApp.swift */,
 				131000ED540178FA27B9097A /* ExtractHistoryView.swift */,
@@ -172,6 +175,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				206D7A1C116D3EA4770939DB /* AppModel.swift in Sources */,
+				1922347F0430FDF89B0E418E /* ContentPreviewStepView.swift in Sources */,
 				7DAB8C1C93733038BA78A9B0 /* DbZipMenubarApp.swift in Sources */,
 				17AB984A621520BA5E66D050 /* ExtractHistoryView.swift in Sources */,
 				BB5988A23342B851AFE9F2A2 /* MenuBarView.swift in Sources */,
@@ -192,7 +196,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/DbZipMenubar/DbZipMenubar.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -206,7 +210,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "tools.wayne.db-zip-menubar";
 				PRODUCT_NAME = "DB Zip";
 				SDKROOT = macosx;
@@ -342,7 +346,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/DbZipMenubar/DbZipMenubar.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -356,7 +360,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "tools.wayne.db-zip-menubar";
 				PRODUCT_NAME = "DB Zip";
 				SDKROOT = macosx;

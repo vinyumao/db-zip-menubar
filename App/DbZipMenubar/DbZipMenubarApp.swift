@@ -4,6 +4,7 @@ import DbZipCore
 
 @main
 struct DbZipMenubarApp: App {
+    @NSApplicationDelegateAdaptor(MenuBarAppDelegate.self) private var delegate
     @StateObject private var appModel = AppModel()
 
     var body: some Scene {
@@ -42,6 +43,13 @@ struct DbZipMenubarApp: App {
         }
         .defaultSize(width: 520, height: 320)
         .windowResizability(.contentSize)
+    }
+}
+
+final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NotificationCenter.default.post(name: .openPendingListWindow, object: nil)
+        return false
     }
 }
 
